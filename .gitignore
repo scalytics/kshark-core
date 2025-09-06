@@ -18,6 +18,8 @@ kshark-*
 .vscode/
 *.swp
 *~
+.DS_Store
+.DS_Store/
 
 # Local configuration files
 ai_config.json
