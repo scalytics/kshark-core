@@ -876,9 +876,85 @@ func checkLicense() bool {
 	return err == nil
 }
 
+func animateSharkFin(start <-chan bool, done chan bool) {
+	// Wait for the start signal
+	<-start
+
+	width := 40
+	pos := 0
+	direction := 1 // 1 for right, -1 for left
+
+	for {
+		select {
+		case <-done:
+			// Clear the line completely before exiting
+			fmt.Print("\r" + strings.Repeat(" ", width+20) + "\r")
+			return
+		default:
+			var builder strings.Builder
+			builder.WriteString("\r[")
+			for i := 0; i < width; i++ {
+				if i == pos {
+					builder.WriteString("^") // The shark fin
+				} else {
+					builder.WriteString("~") // The water
+				}
+			}
+			builder.WriteString("] Scanning...")
+
+			fmt.Print(builder.String())
+
+			// Update position and direction
+			pos += direction
+			if pos >= width-1 || pos <= 0 {
+				direction *= -1 // Reverse direction
+			}
+
+			time.Sleep(80 * time.Millisecond)
+		}
+	}
+}
+
+// ---------- Scan Plan ----------
+
+func printScanPlan(props map[string]string, topic string, diag bool) {
+	fmt.Println("\n--- Scan Plan ---")
+	fmt.Printf("Target Kafka Cluster: %s\n", props["bootstrap.servers"])
+	if topic != "" {
+		fmt.Printf("Target Topic: %s\n", topic)
+	} else {
+		fmt.Println("Target Topic: (none, metadata checks only)")
+	}
+
+	fmt.Println("\nChecks to be performed:")
+	fmt.Println("  - Connectivity Checks (DNS, TCP, TLS) for each broker.")
+	fmt.Println("  - Kafka Protocol Checks (ApiVersions, Topic Metadata).")
+	if topic != "" {
+		fmt.Println("  - Produce & Consume Probe.")
+	}
+	if props["schema.registry.url"] != "" {
+		fmt.Printf("  - Schema Registry Check: %s\n", props["schema.registry.url"])
+	}
+	if props["rest.proxy.url"] != "" {
+		fmt.Printf("  - REST Proxy Check: %s\n", props["rest.proxy.url"])
+	}
+	if diag {
+		fmt.Println("  - Network Diagnostics (Traceroute, MTU).")
+	}
+	fmt.Println("-------------------")
+}
+
 // ---------- Main ----------
 
 func main() {
+	fmt.Println(`
+ __      _________.__                  __    
+|  | __ /   _____/|  |__ _____ _______|  | __
+|  |/ / \_____  \ |  |  \\__  \\_  __ \  |/ /
+|    <  /        \|   Y  \/ __ \|  | \/    < 
+|__|_ \/_______  /|___|  (____  /__|  |__|_ \
+     \/        \/      \/     \/           \/
+`)
 	propsPath := flag.String("props", "", "Path to client .properties")
 	topic := flag.String("topic", "", "Topic to test (optional for metadata-only)")
 	group := flag.String("group", "", "Consumer group for probe (ephemeral by default)")
@@ -918,6 +994,31 @@ func main() {
 		fmt.Fprintln(os.Stderr, "bootstrap.servers missing")
 		os.Exit(1)
 	}
+
+	// Print the plan and wait for confirmation
+	printScanPlan(props, *topic, *diag)
+
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Print("\nContinue with the scan? (y/n): ")
+		input, _ := reader.ReadString('\n')
+		input = strings.ToLower(strings.TrimSpace(input))
+		if input == "y" || input == "yes" {
+			break
+		}
+		if input == "n" || input == "no" {
+			fmt.Println("Scan aborted by user.")
+			os.Exit(0)
+		}
+	}
+
+	// Prepare and start scan animation in the background
+	startAnimation := make(chan bool)
+	doneAnimation := make(chan bool)
+	go animateSharkFin(startAnimation, doneAnimation)
+
+	// Signal the animation to start right before the scan
+	startAnimation <- true
 
 	// Per-broker checks
 	brokers := strings.Split(bootstrap, ",")
@@ -996,6 +1097,9 @@ func main() {
 		}
 	}
 
+	// Stop scan animation
+	doneAnimation <- true
+
 	report.FinishedAt = time.Now()
 	summarize(report)
 	printPretty(report)
@@ -1042,15 +1146,17 @@ func main() {
 		printIllustrativeAnalysis(analysis)
 		fmt.Println("-------------------")
 
-		if err := writeHTMLReport(report, analysis); err != nil {
+		reportPath, err := writeHTMLReport(report, analysis)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing HTML report: %v\n", err)
 		} else {
-			fmt.Println("\nAI analysis report written to analysis_report.html")
+			absPath, _ := filepath.Abs(reportPath)
+			fmt.Printf("\nAI analysis report written to %s\n", absPath)
 		}
 	}
 }
 
-func writeHTMLReport(r *Report, analysis *AIAnalysisResponse) error {
+func writeHTMLReport(r *Report, analysis *AIAnalysisResponse) (string, error) {
 	// Data structure to pass to the template
 	type TemplateData struct {
 		Report   *Report
@@ -1086,23 +1192,37 @@ func writeHTMLReport(r *Report, analysis *AIAnalysisResponse) error {
 	// Parse the template file
 	tmpl, err := template.New("report_template.html").Funcs(funcMap).ParseFiles("web/templates/report_template.html")
 	if err != nil {
-		return fmt.Errorf("could not parse html template: %w", err)
+		return "", fmt.Errorf("could not parse html template: %w", err)
 	}
 
-	// Create the output file
-	file, err := os.Create("analysis_report.html")
+	// Create the output file with a dynamic name
+	hostname, err := os.Hostname()
 	if err != nil {
-		return fmt.Errorf("could not create html report file: %w", err)
+		hostname = "unknown" // Fallback hostname
+	}
+	hostname = strings.Split(hostname, ".")[0] // Use short hostname
+	timestamp := time.Now().Format("20060102_150405")
+	reportDir := "reports"
+
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		return "", fmt.Errorf("could not create reports directory: %w", err)
+	}
+
+	reportPath := filepath.Join(reportDir, fmt.Sprintf("analysis_report_%s_%s.html", hostname, timestamp))
+
+	file, err := os.Create(reportPath)
+	if err != nil {
+		return "", fmt.Errorf("could not create html report file: %w", err)
 	}
 	defer file.Close()
 
 	// Execute the template with the data and write to the file
 	err = tmpl.Execute(file, data)
 	if err != nil {
-		return fmt.Errorf("could not execute html template: %w", err)
+		return "", fmt.Errorf("could not execute html template: %w", err)
 	}
 
-	return nil
+	return reportPath, nil
 }
 
 func writeJSON(path string, r *Report) error {
