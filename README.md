@@ -1,4 +1,4 @@
-# kshark 🦈
+# kshark 
 
 ![kshark title image](docs/images/title.png)
 
