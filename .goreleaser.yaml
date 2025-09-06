@@ -1,0 +1,59 @@
+# .goreleaser.yaml
+#
+# Build configuration for GoReleaser.
+# See https://goreleaser.com/customization/ for more options.
+
+project_name: kshark
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: kshark
+    main: ./cmd/kshark
+    binary: kshark
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+archives:
+  - format: tar.gz
+    # This will create a zip file for windows builds
+    format_overrides:
+      - goos: windows
+        format: zip
+    # You can add additional files to the archive here
+    files:
+      - LICENSE
+      - README.md
+      - client.properties.example
+      - ai_config.json.example
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+# The release section allows you to customize the GitHub Release page.
+release:
+  # You can change the name of the release from the tag.
+  name_template: "Release {{.Version}}"
+  # You can mark the release as a pre-release.
+  prerelease: auto

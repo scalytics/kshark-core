@@ -1,0 +1,10 @@
+# Kafka Cluster
+bootstrap.servers=YOUR_BROKER_HOSTNAME:9092
+security.protocol=SASL_SSL
+sasl.mechanism=PLAIN
+sasl.username=YOUR_API_KEY
+sasl.password=YOUR_API_SECRET
+
+# Schema Registry (optional)
+# schema.registry.url=YOUR_SCHEMA_REGISTRY_URL
+# basic.auth.user.info=YOUR_SCHEMA_REGISTRY_KEY:YOUR_SCHEMA_REGISTRY_SECRET
