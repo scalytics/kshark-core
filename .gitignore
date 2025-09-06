@@ -27,5 +27,4 @@ client.properties
 license.key
 
 # Reports
-*.html
-*.json
+analysis_report.html
