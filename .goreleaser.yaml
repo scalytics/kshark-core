@@ -11,7 +11,7 @@ before:
 
 builds:
   - id: kshark
-    main: ./cmd/kshark
+    main: ./cmd/kshark/main.go
     binary: kshark
     env:
       - CGO_ENABLED=0
