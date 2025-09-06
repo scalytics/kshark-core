@@ -1,0 +1,15 @@
+{
+  "default_provider": "openai",
+  "providers": {
+    "openai": {
+      "api_endpoint": "https://api.openai.com/v1/chat/completions",
+      "api_key": "YOUR_OPENAI_API_KEY",
+      "model": "gpt-4"
+    },
+    "scalytics-connect": {
+      "api_endpoint": "https://connect.scalytics.io/v1/chat/completions",
+      "api_key": "YOUR_SCALYTICS_CONNECT_API_KEY",
+      "model": "default"
+    }
+  }
+}

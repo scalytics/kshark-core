@@ -1,0 +1,29 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+kshark
+kshark-*
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# IDE settings and temporary files
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local configuration files
+ai_config.json
+client.properties
+license.key
+
+# Reports
+*.html
+*.json
