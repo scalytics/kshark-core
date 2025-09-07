@@ -117,7 +117,7 @@ type AIAnalysisResponse struct {
 	Disclaimer        string   `json:"disclaimer"`
 }
 
-func (c *AIClient) AnalyzeReport(report *Report) (*AIAnalysisResponse, error) {
+func (c *AIClient) AnalyzeReport(ctx context.Context, report *Report) (*AIAnalysisResponse, error) {
 	reportJSON, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("could not marshal report to JSON: %w", err)
@@ -155,7 +155,7 @@ You MUST respond ONLY with a single, valid JSON object conforming to the followi
 		return nil, fmt.Errorf("could not marshal API request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.config.APIEndpoint, bytes.NewBuffer(reqBytes))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.config.APIEndpoint, bytes.NewBuffer(reqBytes))
 	if err != nil {
 		return nil, fmt.Errorf("could not create API request: %w", err)
 	}
@@ -252,6 +252,7 @@ type Report struct {
 	StartedAt  time.Time             `json:"started_at"`
 	FinishedAt time.Time             `json:"finished_at"`
 	ConfigEcho map[string]string     `json:"config_echo,omitempty"`
+	HasFailed  bool                  `json:"-"`
 }
 
 type CheckStats struct {
@@ -263,7 +264,12 @@ type CheckStats struct {
 
 // ---------- Utilities ----------
 
-func addRow(r *Report, row Row) { r.Rows = append(r.Rows, row) }
+func addRow(r *Report, row Row) {
+	if row.Status == FAIL {
+		r.HasFailed = true
+	}
+	r.Rows = append(r.Rows, row)
+}
 
 func summarize(r *Report) {
 	r.Summary = map[string]CheckStats{}
@@ -630,7 +636,7 @@ func checkTopic(r *Report, p map[string]string, brokerAddr, topic string) {
 	addRow(r, Row{"kafka", topic, L7, OK, fmt.Sprintf("Topic visible; leader partitions=%d", leaders), ""})
 }
 
-func probeProduceConsume(r *Report, p map[string]string, bootstrap, topic, group string) {
+func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bootstrap, topic, group string) {
 	if topic == "" {
 		addRow(r, Row{"kafka", "(no topic)", L7, SKIP, "Produce/Consume skipped", ""})
 		return
@@ -659,9 +665,9 @@ func probeProduceConsume(r *Report, p map[string]string, bootstrap, topic, group
 		Time:    time.Now(),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := w.WriteMessages(ctx, msg); err != nil {
+	writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer writeCancel()
+	if err := w.WriteMessages(writeCtx, msg); err != nil {
 		addRow(r, Row{"kafka", topic, L7, FAIL, policyHint("Produce", err), hint(err)})
 		return
 	}
@@ -679,9 +685,9 @@ func probeProduceConsume(r *Report, p map[string]string, bootstrap, topic, group
 	})
 	defer reader.Close()
 
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel2()
-	rec, err := reader.ReadMessage(ctx2)
+	readCtx, readCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer readCancel()
+	rec, err := reader.ReadMessage(readCtx)
 	if err != nil {
 		addRow(r, Row{"kafka", topic, L7, FAIL, policyHint("Consume", err), "Grant Read on topic and Group Read/Describe; check prefixes."})
 		return
@@ -750,7 +756,7 @@ func httpClientFromTLS(tlsConf *tls.Config, timeout time.Duration) *http.Client 
 	return &http.Client{Transport: tr, Timeout: timeout}
 }
 
-func checkSchemaRegistry(r *Report, p map[string]string) {
+func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string) {
 	url := strings.TrimSpace(p["schema.registry.url"])
 	if url == "" {
 		return
@@ -767,7 +773,7 @@ func checkSchemaRegistry(r *Report, p map[string]string) {
 		return
 	}
 	client := httpClientFromTLS(tlsConf, 8*time.Second)
-	req, _ := http.NewRequest("GET", strings.TrimRight(url, "/")+"/subjects", nil)
+	req, _ := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(url, "/")+"/subjects", nil)
 	if info := p["basic.auth.user.info"]; info != "" {
 		up := strings.SplitN(info, ":", 2)
 		if len(up) == 2 {
@@ -869,6 +875,15 @@ func trimLines(s string, n int) string {
 	return strings.Join(lines[:n], "\n") + "\n…"
 }
 
+// isTTY checks if the given file descriptor is a terminal.
+func isTTY(file *os.File) bool {
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return false // Default to false on error
+	}
+	return (fileInfo.Mode() & os.ModeCharDevice) != 0
+}
+
 // ---------- Licensing ----------
 
 func checkLicense() bool {
@@ -960,10 +975,12 @@ func main() {
 	group := flag.String("group", "", "Consumer group for probe (ephemeral by default)")
 	jsonOut := flag.String("json", "", "Write JSON report to file (premium feature)")
 	analyze := flag.Bool("analyze", false, "Analyze report with AI (premium feature)")
+	noAI := flag.Bool("no-ai", false, "Skip AI analysis")
 	provider := flag.String("provider", "", "Select AI provider from ai_config.json (e.g., openai, scalytics-connect)")
-	timeout := flag.Duration("timeout", 8*time.Second, "Dial/HTTP timeout")
+	timeout := flag.Duration("timeout", 60*time.Second, "Global timeout for the entire scan")
 	preset := flag.String("preset", "", "Preset: cc-plain|self-scram")
 	diag := flag.Bool("diag", true, "Run traceroute/MTU diagnostics if tools are available")
+	yes := flag.Bool("y", false, "Skip interactive confirmation and proceed with the scan")
 	flag.Parse()
 
 	if *propsPath == "" {
@@ -976,6 +993,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: --json and --analyze are premium features requiring a valid license.key file.")
 		os.Exit(1)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
 
 	report := &Report{StartedAt: time.Now()}
 
@@ -995,34 +1015,44 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Print the plan and wait for confirmation
+	// Print the plan and wait for confirmation if not running in non-interactive mode
 	printScanPlan(props, *topic, *diag)
 
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Print("\nContinue with the scan? (y/n): ")
-		input, _ := reader.ReadString('\n')
-		input = strings.ToLower(strings.TrimSpace(input))
-		if input == "y" || input == "yes" {
-			break
-		}
-		if input == "n" || input == "no" {
-			fmt.Println("Scan aborted by user.")
-			os.Exit(0)
+	if !*yes {
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			fmt.Print("\nContinue with the scan? (y/n): ")
+			input, _ := reader.ReadString('\n')
+			input = strings.ToLower(strings.TrimSpace(input))
+			if input == "y" || input == "yes" {
+				break
+			}
+			if input == "n" || input == "no" {
+				fmt.Println("Scan aborted by user.")
+				os.Exit(0)
+			}
 		}
 	}
 
-	// Prepare and start scan animation in the background
-	startAnimation := make(chan bool)
-	doneAnimation := make(chan bool)
-	go animateSharkFin(startAnimation, doneAnimation)
-
-	// Signal the animation to start right before the scan
-	startAnimation <- true
+	// Prepare and start scan animation in the background only if interactive
+	var startAnimation, doneAnimation chan bool
+	if !*yes && isTTY(os.Stdout) {
+		startAnimation = make(chan bool)
+		doneAnimation = make(chan bool)
+		go animateSharkFin(startAnimation, doneAnimation)
+		startAnimation <- true // Signal the animation to start
+	}
 
 	// Per-broker checks
 	brokers := strings.Split(bootstrap, ",")
 	for _, b := range brokers {
+		select {
+		case <-ctx.Done():
+			addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached during broker checks", ""})
+			goto endScan
+		default:
+		}
+
 		b = strings.TrimSpace(b)
 		host, port, err := net.SplitHostPort(b)
 		if err != nil {
@@ -1031,7 +1061,7 @@ func main() {
 		}
 		checkDNS(report, host, "kafka")
 		addr := net.JoinHostPort(host, port)
-		conn := checkTCP(report, addr, "kafka", *timeout)
+		conn := checkTCP(report, addr, "kafka", 8*time.Second) // Keep individual dial timeout short
 		if conn == nil {
 			continue
 		}
@@ -1065,12 +1095,25 @@ func main() {
 
 	// Produce/Consume (optional)
 	if *topic != "" {
-		probeProduceConsume(report, props, bootstrap, *topic, *group)
+		select {
+		case <-ctx.Done():
+			addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before produce/consume", ""})
+			goto endScan
+		default:
+			probeProduceConsume(ctx, report, props, bootstrap, *topic, *group)
+		}
 	}
 
 	// Schema Registry (optional)
-	checkSchemaRegistry(report, props)
+	select {
+	case <-ctx.Done():
+		addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before schema registry check", ""})
+		goto endScan
+	default:
+		checkSchemaRegistry(ctx, report, props)
+	}
 
+endScan:
 	// Optional REST Proxy: set rest.proxy.url=...
 	if rest := strings.TrimSpace(props["rest.proxy.url"]); rest != "" {
 		checkDNS(report, extractHost(rest), "rest-proxy")
@@ -1097,8 +1140,10 @@ func main() {
 		}
 	}
 
-	// Stop scan animation
-	doneAnimation <- true
+	// Stop scan animation if it was started
+	if doneAnimation != nil {
+		doneAnimation <- true
+	}
 
 	report.FinishedAt = time.Now()
 	summarize(report)
@@ -1112,7 +1157,7 @@ func main() {
 		fmt.Printf("JSON report written to %s\n", *jsonOut)
 	}
 
-	if *analyze {
+	if *analyze && !*noAI {
 		aiConfig, err := loadAIConfig()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error loading AI configuration: %v\n", err)
@@ -1137,7 +1182,7 @@ func main() {
 
 		aiClient := NewAIClient(&providerConfig)
 		fmt.Printf("\nSubmitting report for AI analysis using provider '%s'...\n", providerName)
-		analysis, err := aiClient.AnalyzeReport(report)
+		analysis, err := aiClient.AnalyzeReport(ctx, report)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error during AI analysis: %v\n", err)
 			os.Exit(1)
@@ -1153,6 +1198,10 @@ func main() {
 			absPath, _ := filepath.Abs(reportPath)
 			fmt.Printf("\nAI analysis report written to %s\n", absPath)
 		}
+	}
+
+	if report.HasFailed {
+		os.Exit(1)
 	}
 }
 
