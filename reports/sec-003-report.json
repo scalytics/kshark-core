@@ -1,0 +1,61 @@
+{
+  "rows": [
+    {
+      "component": "kafka",
+      "target": "localhost",
+      "layer": "L3-Network",
+      "status": "OK",
+      "detail": "Resolved host"
+    },
+    {
+      "component": "kafka",
+      "target": "localhost:9092",
+      "layer": "L4-TCP",
+      "status": "FAIL",
+      "detail": "TCP connect failed: dial tcp [::1]:9092: connect: connection refused",
+      "hint": "Firewall, SG/NACL/NSG, LB listeners, PodNetworkPolicy, or routing."
+    },
+    {
+      "component": "schema-reg",
+      "target": "localhost",
+      "layer": "L3-Network",
+      "status": "OK",
+      "detail": "Resolved host"
+    },
+    {
+      "component": "schema-reg",
+      "target": "http://localhost:8081",
+      "layer": "L7-HTTP",
+      "status": "FAIL",
+      "detail": "GET /subjects failed: Get \"http://localhost:8081/subjects\": dial tcp [::1]:8081: connect: connection refused",
+      "hint": "TLS/host/network or auth."
+    }
+  ],
+  "summary": {
+    "L3-Network": {
+      "ok": 2,
+      "warn": 0,
+      "fail": 0,
+      "skip": 0
+    },
+    "L4-TCP": {
+      "ok": 0,
+      "warn": 0,
+      "fail": 1,
+      "skip": 0
+    },
+    "L7-HTTP": {
+      "ok": 0,
+      "warn": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  "started_at": "2025-09-11T09:51:08.321441+02:00",
+  "finished_at": "2025-09-11T09:51:08.326214+02:00",
+  "config_echo": {
+    "basic.auth.user.info": "***",
+    "bootstrap.servers": "localhost:9092",
+    "schema.registry.url": "http://localhost:8081"
+  }
+}

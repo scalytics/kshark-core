@@ -36,6 +36,8 @@ import (
 	"strings"
 	"time"
 
+	"regexp"
+
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
 	"github.com/segmentio/kafka-go/sasl/plain"
@@ -824,7 +826,19 @@ func runCmdIfExists(name string, args ...string) (string, error) {
 	return buf.String(), err
 }
 
+// isValidHostname checks if the hostname is valid and doesn't contain malicious characters.
+func isValidHostname(host string) bool {
+	// Regex to match a valid hostname (alphanumeric, hyphens, periods).
+	// It explicitly disallows characters like ';', '&', '|', '`', '$', '(', ')', etc.
+	re := regexp.MustCompile(`^[a-zA-Z0-9\.\-]+$`)
+	return re.MatchString(host)
+}
+
 func bestEffortTraceroute(r *Report, host string) {
+	if !isValidHostname(host) {
+		addRow(r, Row{"diag", host, DIAG, FAIL, "Invalid hostname provided", "Skipping traceroute to prevent command injection."})
+		return
+	}
 	// Linux: traceroute or tracepath; macOS: traceroute; Windows: tracert
 	if out, err := runCmdIfExists("traceroute", "-n", "-w", "2", "-q", "1", host); err == nil {
 		addRow(r, Row{"diag", host, DIAG, OK, "traceroute OK (see JSON)", ""})
@@ -845,6 +859,10 @@ func bestEffortTraceroute(r *Report, host string) {
 }
 
 func mtuCheck(r *Report, host string) {
+	if !isValidHostname(host) {
+		addRow(r, Row{"diag", host, DIAG, FAIL, "Invalid hostname provided", "Skipping MTU check to prevent command injection."})
+		return
+	}
 	// Linux tracepath usually reports pMTU; otherwise try ping DF
 	if out, err := runCmdIfExists("tracepath", host); err == nil && strings.Contains(out, "pmtu") {
 		addRow(r, Row{"diag", host, DIAG, OK, "pMTU detected via tracepath", ""})
@@ -1150,11 +1168,13 @@ endScan:
 	printPretty(report)
 
 	if *jsonOut != "" {
-		if err := writeJSON(*jsonOut, report); err != nil {
-			fmt.Fprintf(os.Stderr, "write json: %v\n", err)
+		actualPath, err := writeJSON(*jsonOut, report)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing JSON report: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("JSON report written to %s\n", *jsonOut)
+		absPath, _ := filepath.Abs(actualPath)
+		fmt.Printf("JSON report written to %s\n", absPath)
 	}
 
 	if *analyze && !*noAI {
@@ -1274,28 +1294,53 @@ func writeHTMLReport(r *Report, analysis *AIAnalysisResponse) (string, error) {
 	return reportPath, nil
 }
 
-func writeJSON(path string, r *Report) error {
+func createSafeReportPath(userInputPath string, safeSubDir string) (string, error) {
+	if userInputPath == "" {
+		return "", errors.New("output path cannot be empty")
+	}
+
+	// Sanitize the filename by stripping any directory components
+	cleanFilename := filepath.Base(userInputPath)
+	if cleanFilename == "." || cleanFilename == "/" || cleanFilename == ".." {
+		return "", fmt.Errorf("invalid filename provided: %s", userInputPath)
+	}
+
+	// Ensure the safe subdirectory exists
+	if err := os.MkdirAll(safeSubDir, 0755); err != nil {
+		return "", fmt.Errorf("could not create reports directory '%s': %w", safeSubDir, err)
+	}
+
+	// Join the safe directory and the clean filename
+	safePath := filepath.Join(safeSubDir, cleanFilename)
+	return safePath, nil
+}
+
+func writeJSON(path string, r *Report) (string, error) {
 	if path == "" {
-		return nil
+		return "", nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.Create(path)
+
+	safePath, err := createSafeReportPath(path, "reports")
 	if err != nil {
-		return err
+		return "", fmt.Errorf("invalid output path: %w", err)
+	}
+
+	f, err := os.Create(safePath)
+	if err != nil {
+		return safePath, err
 	}
 	defer f.Close()
+
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	return enc.Encode(r)
+	return safePath, enc.Encode(r)
 }
 
 func redactProps(p map[string]string) map[string]string {
 	out := map[string]string{}
 	for k, v := range p {
 		lk := strings.ToLower(k)
-		if strings.Contains(lk, "password") || strings.Contains(lk, "secret") || k == "sasl.oauthbearer.token" || strings.Contains(lk, "key") {
+		if strings.Contains(lk, "password") || strings.Contains(lk, "secret") || k == "sasl.oauthbearer.token" || strings.Contains(lk, "key") || k == "basic.auth.user.info" {
 			out[k] = "***"
 		} else {
 			out[k] = v
