@@ -1,0 +1,211 @@
+# Release Guide
+
+This document describes how to build, test, and publish releases of kshark.
+
+## Prerequisites
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Go | 1.23+ | Compile the binary |
+| GoReleaser | latest | Cross-platform builds and GitHub Releases |
+| Docker | 20+ | Container image builds (optional) |
+| GNU Make | 3.81+ | Local build shortcuts (optional) |
+
+## Local Development
+
+### Build
+
+```bash
+# Quick build (uses make)
+make build
+
+# Or directly with go
+CGO_ENABLED=0 go build -o kshark ./cmd/kshark
+
+# Build with version metadata injected
+CGO_ENABLED=0 go build \
+  -ldflags "-s -w -X main.version=dev -X main.commit=$(git rev-parse --short HEAD) -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o kshark ./cmd/kshark
+```
+
+### Test and Vet
+
+```bash
+make vet       # static analysis
+make test      # tests with race detector
+make all       # vet + build
+```
+
+### Local Snapshot Release
+
+Build all platform binaries locally without publishing:
+
+```bash
+make snapshot
+# or
+goreleaser release --snapshot --clean
+```
+
+This produces archives for every OS/arch combination under `dist/`.
+
+### Docker
+
+```bash
+make docker
+# or
+docker build -t kshark:latest .
+```
+
+## Makefile Targets
+
+| Target | Description |
+|--------|-------------|
+| `make build` | Build the kshark binary with version/commit/date ldflags |
+| `make test` | Run tests with `-race -timeout 120s` |
+| `make vet` | Run `go vet ./...` |
+| `make all` | Vet then build |
+| `make clean` | Remove the binary and `dist/` directory |
+| `make snapshot` | GoReleaser snapshot build (no publish) |
+| `make docker` | Build Docker image tagged with version and `latest` |
+| `make help` | List all targets |
+
+## CI Pipeline
+
+The GitHub Actions workflow (`.github/workflows/build-and-release.yml`) runs two jobs:
+
+### Build & Test (every push and PR to `main`)
+
+1. Checkout code
+2. Set up Go 1.23
+3. `go mod download`
+4. `go vet ./...`
+5. `go build -o kshark ./cmd/kshark`
+6. `go test ./... -v -race -timeout 120s`
+
+### Release (only on `v*` tags, after Build & Test passes)
+
+1. Checkout with full git history (`fetch-depth: 0`)
+2. Set up Go 1.23
+3. Run GoReleaser with `GITHUB_TOKEN`
+
+GoReleaser handles:
+- Cross-compilation for Linux, macOS, Windows (amd64 + arm64)
+- Static binaries (`CGO_ENABLED=0`)
+- Archive creation (`.tar.gz` for Unix, `.zip` for Windows)
+- SHA256 checksum file (`checksums.txt`)
+- GitHub Release page with auto-generated changelog
+- Bundling of `LICENSE`, `README.md`, `client.properties.example`, `ai_config.json.example`, and `web/templates/`
+
+## Publishing a Release
+
+### Step 1 — Ensure `main` is clean
+
+```bash
+git checkout main
+git pull origin main
+make all        # vet + build
+make test       # run tests
+```
+
+### Step 2 — Tag the release
+
+Use [semantic versioning](https://semver.org/). Tags prefixed with `-rc`, `-beta`, or `-alpha` are automatically marked as pre-releases.
+
+```bash
+# Stable release
+git tag v0.31.0
+
+# Pre-release
+git tag v0.31.0-rc1
+```
+
+### Step 3 — Push the tag
+
+```bash
+git push origin v0.31.0
+```
+
+This triggers the CI workflow. The **Build & Test** job runs first; if it passes, the **Release** job runs GoReleaser, which creates the GitHub Release with all binaries and checksums.
+
+### Step 4 — Verify
+
+1. Go to **Releases** on GitHub and confirm the new release appears.
+2. Download a binary for your platform and verify:
+   ```bash
+   tar -xzf kshark_0.31.0_linux_amd64.tar.gz
+   ./kshark --version
+   # Expected: kshark version 0.31.0 (commit abc1234, built 2025-...)
+   sha256sum -c checksums.txt
+   ```
+
+## Release Artifacts
+
+Each release produces the following files on the GitHub Releases page:
+
+| File | Description |
+|------|-------------|
+| `kshark_<ver>_linux_amd64.tar.gz` | Linux x86-64 binary |
+| `kshark_<ver>_linux_arm64.tar.gz` | Linux ARM64 binary |
+| `kshark_<ver>_darwin_amd64.tar.gz` | macOS Intel binary |
+| `kshark_<ver>_darwin_arm64.tar.gz` | macOS Apple Silicon binary |
+| `kshark_<ver>_windows_amd64.zip` | Windows x86-64 binary |
+| `kshark_<ver>_windows_arm64.zip` | Windows ARM64 binary |
+| `checksums.txt` | SHA256 checksums for all archives |
+
+Every archive also includes:
+- `LICENSE`
+- `README.md`
+- `client.properties.example`
+- `ai_config.json.example`
+- `web/templates/report_template.html`
+
+## Version Injection
+
+The build injects three variables at link time via `-ldflags`:
+
+| Variable | Source | Example |
+|----------|--------|---------|
+| `main.version` | Git tag (GoReleaser) or `git describe` (Makefile) | `0.31.0` |
+| `main.commit` | Git short SHA | `ae0ec21` |
+| `main.date` | Build timestamp (UTC) | `2025-06-15T10:30:00Z` |
+
+These values are printed by `kshark --version` and included in reports.
+
+## Changelog
+
+GoReleaser auto-generates the changelog from commit messages between the previous tag and the new tag. Commits are grouped:
+
+| Group | Commit prefix |
+|-------|---------------|
+| **Features** | `feat:` or `feat(scope):` |
+| **Bug Fixes** | `fix:` or `fix(scope):` |
+| **Other** | Everything else |
+
+Commits starting with `docs:`, `test:`, or `chore:` are excluded from the changelog.
+
+## Hotfix Process
+
+For urgent fixes against a released version:
+
+```bash
+git checkout v0.31.0           # start from the release tag
+git checkout -b hotfix/issue   # create a hotfix branch
+# ... make and test changes ...
+git commit -m "fix: description of the fix"
+git checkout main
+git merge hotfix/issue
+git tag v0.31.1
+git push origin main v0.31.1
+```
+
+## Docker Release
+
+Docker images are built locally and are not currently published to a registry by the CI pipeline. To publish:
+
+```bash
+make docker
+docker tag kshark:latest your-registry/kshark:0.31.0
+docker tag kshark:latest your-registry/kshark:latest
+docker push your-registry/kshark:0.31.0
+docker push your-registry/kshark:latest
+```

@@ -119,13 +119,8 @@ type AIAnalysisResponse struct {
 	Disclaimer        string   `json:"disclaimer"`
 }
 
-func (c *AIClient) AnalyzeReport(ctx context.Context, report *Report) (*AIAnalysisResponse, error) {
-	reportJSON, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("could not marshal report to JSON: %w", err)
-	}
-
-	systemPrompt := `You are an expert Kafka and network engineer acting as a JSON API. Your task is to analyze a JSON report from the 'kshark' diagnostic tool and provide a root cause analysis.
+// analysisSystemPrompt is the system prompt used for AI-powered report analysis.
+const analysisSystemPrompt = `You are an expert Kafka and network engineer acting as a JSON API. Your task is to analyze a JSON report from the 'kshark' diagnostic tool and provide a root cause analysis.
 
 Analyze the 'rows' array for entries with a 'status' of "FAIL" or "WARN".
 
@@ -142,7 +137,68 @@ You MUST respond ONLY with a single, valid JSON object conforming to the followi
   "disclaimer": "This analysis is based on generic world knowledge. For context-aware insights tailored to your company's specific environment, consider using the Scalytics-Connect AI stack."
 }`
 
-	userPrompt := string(reportJSON)
+// buildAnalysisPrompt returns the system prompt and user prompt (the JSON report) for AI analysis.
+func buildAnalysisPrompt(report *Report) (string, string, error) {
+	reportJSON, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return "", "", fmt.Errorf("could not marshal report to JSON: %w", err)
+	}
+	return analysisSystemPrompt, string(reportJSON), nil
+}
+
+// writeAnalysisPromptMD saves the analysis prompt as a Markdown file so the user
+// can paste it into any AI chatbot (ChatGPT, Claude, Gemini, etc.) when no API key
+// is configured.
+func writeAnalysisPromptMD(report *Report) (string, error) {
+	systemPrompt, userPrompt, err := buildAnalysisPrompt(report)
+	if err != nil {
+		return "", err
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+	hostname = strings.Split(hostname, ".")[0]
+	timestamp := time.Now().Format("20060102_150405")
+	reportDir := "reports"
+
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		return "", fmt.Errorf("could not create reports directory: %w", err)
+	}
+
+	mdPath := filepath.Join(reportDir, fmt.Sprintf("analysis_prompt_%s_%s.md", hostname, timestamp))
+
+	var buf bytes.Buffer
+	buf.WriteString("# kshark AI Analysis Prompt\n\n")
+	buf.WriteString("This file was generated because no AI API key was configured.\n")
+	buf.WriteString("You can copy the contents below and paste them into **any AI chatbot**\n")
+	buf.WriteString("(ChatGPT, Claude, Gemini, Copilot, or any OpenAI-compatible endpoint)\n")
+	buf.WriteString("to get an automated root-cause analysis of your Kafka connectivity report.\n\n")
+	buf.WriteString("---\n\n")
+	buf.WriteString("## Step 1 — System Prompt\n\n")
+	buf.WriteString("Copy this as the **system message** (or paste it first in the conversation):\n\n")
+	buf.WriteString("```text\n")
+	buf.WriteString(systemPrompt)
+	buf.WriteString("\n```\n\n")
+	buf.WriteString("## Step 2 — Report Data\n\n")
+	buf.WriteString("Then send this as the **user message**:\n\n")
+	buf.WriteString("```json\n")
+	buf.WriteString(userPrompt)
+	buf.WriteString("\n```\n")
+
+	if err := os.WriteFile(mdPath, buf.Bytes(), 0644); err != nil {
+		return "", fmt.Errorf("could not write analysis prompt file: %w", err)
+	}
+
+	return mdPath, nil
+}
+
+func (c *AIClient) AnalyzeReport(ctx context.Context, report *Report) (*AIAnalysisResponse, error) {
+	systemPrompt, userPrompt, err := buildAnalysisPrompt(report)
+	if err != nil {
+		return nil, err
+	}
 
 	reqBody := APIRequest{
 		Model: c.config.Model,
@@ -1179,44 +1235,74 @@ endScan:
 
 	if *analyze && !*noAI {
 		aiConfig, err := loadAIConfig()
+		needsFallback := false
+		var fallbackReason string
+
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error loading AI configuration: %v\n", err)
-			os.Exit(1)
+			needsFallback = true
+			fallbackReason = fmt.Sprintf("AI config not available: %v", err)
 		}
 
-		providerName := aiConfig.DefaultProvider
-		if *provider != "" {
-			providerName = *provider
+		var providerName string
+		var providerConfig AIProviderConfig
+		if !needsFallback {
+			providerName = aiConfig.DefaultProvider
+			if *provider != "" {
+				providerName = *provider
+			}
+
+			var ok bool
+			providerConfig, ok = aiConfig.Providers[providerName]
+			if !ok {
+				needsFallback = true
+				fallbackReason = fmt.Sprintf("AI provider '%s' not found in ai_config.json", providerName)
+			} else if strings.HasPrefix(providerConfig.APIKey, "YOUR_") || providerConfig.APIKey == "" {
+				needsFallback = true
+				fallbackReason = fmt.Sprintf("API key for provider '%s' is not configured", providerName)
+			}
 		}
 
-		providerConfig, ok := aiConfig.Providers[providerName]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "Error: AI provider '%s' not found in ai_config.json\n", providerName)
-			os.Exit(1)
-		}
-
-		if strings.HasPrefix(providerConfig.APIKey, "YOUR_") || providerConfig.APIKey == "" {
-			fmt.Fprintf(os.Stderr, "Error: API key for provider '%s' is a placeholder. Please replace it with your actual API key in ai_config.json\n", providerName)
-			os.Exit(1)
-		}
-
-		aiClient := NewAIClient(&providerConfig)
-		fmt.Printf("\nSubmitting report for AI analysis using provider '%s'...\n", providerName)
-		analysis, err := aiClient.AnalyzeReport(ctx, report)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error during AI analysis: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("\n--- AI Analysis ---")
-		printIllustrativeAnalysis(analysis)
-		fmt.Println("-------------------")
-
-		reportPath, err := writeHTMLReport(report, analysis)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing HTML report: %v\n", err)
+		if needsFallback {
+			fmt.Fprintf(os.Stderr, "\nNote: %s\n", fallbackReason)
+			fmt.Println("Generating analysis prompt as Markdown file instead...")
+			mdPath, err := writeAnalysisPromptMD(report)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing analysis prompt: %v\n", err)
+			} else {
+				absPath, _ := filepath.Abs(mdPath)
+				fmt.Printf("\nAnalysis prompt saved to: %s\n", absPath)
+				fmt.Println("You can paste the contents of this file into any AI chatbot")
+				fmt.Println("(ChatGPT, Claude, Gemini, etc.) to get a root-cause analysis.")
+			}
 		} else {
-			absPath, _ := filepath.Abs(reportPath)
-			fmt.Printf("\nAI analysis report written to %s\n", absPath)
+			aiClient := NewAIClient(&providerConfig)
+			fmt.Printf("\nSubmitting report for AI analysis using provider '%s'...\n", providerName)
+			analysis, err := aiClient.AnalyzeReport(ctx, report)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error during AI analysis: %v\n", err)
+				fmt.Println("Falling back to saving analysis prompt as Markdown file...")
+				mdPath, err := writeAnalysisPromptMD(report)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error writing analysis prompt: %v\n", err)
+				} else {
+					absPath, _ := filepath.Abs(mdPath)
+					fmt.Printf("\nAnalysis prompt saved to: %s\n", absPath)
+					fmt.Println("You can paste the contents of this file into any AI chatbot")
+					fmt.Println("(ChatGPT, Claude, Gemini, etc.) to get a root-cause analysis.")
+				}
+			} else {
+				fmt.Println("\n--- AI Analysis ---")
+				printIllustrativeAnalysis(analysis)
+				fmt.Println("-------------------")
+
+				reportPath, err := writeHTMLReport(report, analysis)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error writing HTML report: %v\n", err)
+				} else {
+					absPath, _ := filepath.Abs(reportPath)
+					fmt.Printf("\nAI analysis report written to %s\n", absPath)
+				}
+			}
 		}
 	}
 
