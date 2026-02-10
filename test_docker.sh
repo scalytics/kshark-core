@@ -32,6 +32,6 @@ docker run --rm -it \
   -v "$(pwd)/reports:/app/reports" \
   kshark:latest \
   --props client.properties \
-  --topic partnersales \
+  --topic partnersales,inventory,orders \
   --json reports/report.json \
   --analyze

@@ -1006,19 +1006,33 @@ func animateSharkFin(start <-chan bool, done chan bool) {
 
 // ---------- Scan Plan ----------
 
-func printScanPlan(props map[string]string, topic string, diag bool) {
+func parseTopics(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var topics []string
+	for _, t := range strings.Split(raw, ",") {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			topics = append(topics, t)
+		}
+	}
+	return topics
+}
+
+func printScanPlan(props map[string]string, topics []string, diag bool) {
 	fmt.Println("\n--- Scan Plan ---")
 	fmt.Printf("Target Kafka Cluster: %s\n", props["bootstrap.servers"])
-	if topic != "" {
-		fmt.Printf("Target Topic: %s\n", topic)
+	if len(topics) > 0 {
+		fmt.Printf("Target Topics: %s\n", strings.Join(topics, ", "))
 	} else {
-		fmt.Println("Target Topic: (none, metadata checks only)")
+		fmt.Println("Target Topics: (none, metadata checks only)")
 	}
 
 	fmt.Println("\nChecks to be performed:")
 	fmt.Println("  - Connectivity Checks (DNS, TCP, TLS) for each broker.")
 	fmt.Println("  - Kafka Protocol Checks (ApiVersions, Topic Metadata).")
-	if topic != "" {
+	if len(topics) > 0 {
 		fmt.Println("  - Produce & Consume Probe.")
 	}
 	if props["schema.registry.url"] != "" {
@@ -1045,7 +1059,7 @@ func main() {
      \/        \/      \/     \/           \/
 `)
 	propsPath := flag.String("props", "", "Path to client .properties")
-	topic := flag.String("topic", "", "Topic to test (optional for metadata-only)")
+	topic := flag.String("topic", "", "Comma-separated list of topics to test (optional for metadata-only)")
 	group := flag.String("group", "", "Consumer group for probe (ephemeral by default)")
 	jsonOut := flag.String("json", "", "Write JSON report to file (premium feature)")
 	analyze := flag.Bool("analyze", false, "Analyze report with AI (premium feature)")
@@ -1089,8 +1103,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	topics := parseTopics(*topic)
+
 	// Print the plan and wait for confirmation if not running in non-interactive mode
-	printScanPlan(props, *topic, *diag)
+	printScanPlan(props, topics, *diag)
 
 	if !*yes {
 		reader := bufio.NewReader(os.Stdin)
@@ -1158,7 +1174,9 @@ func main() {
 		_ = secured.Close()
 
 		// Kafka protocol: ApiVersions/Metadata + topic visibility
-		checkTopic(report, props, addr, *topic)
+		for _, t := range topics {
+			checkTopic(report, props, addr, t)
+		}
 
 		// Diagnostics (best-effort)
 		if *diag {
@@ -1168,13 +1186,13 @@ func main() {
 	}
 
 	// Produce/Consume (optional)
-	if *topic != "" {
+	for _, t := range topics {
 		select {
 		case <-ctx.Done():
 			addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before produce/consume", ""})
 			goto endScan
 		default:
-			probeProduceConsume(ctx, report, props, bootstrap, *topic, *group)
+			probeProduceConsume(ctx, report, props, bootstrap, t, *group)
 		}
 	}
 
