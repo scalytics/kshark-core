@@ -23,8 +23,28 @@ clean: ## Remove build artifacts
 snapshot: ## Build a local snapshot release (no publish)
 	goreleaser release --snapshot --clean
 
-release: ## Run GoReleaser to publish a release (requires GITHUB_TOKEN and a git tag)
-	goreleaser release --clean
+release: ## Auto-bump patch version, tag, and push to trigger CI release
+	@LATEST=$$(git tag --list 'v*' --sort=-v:refname | head -1); \
+	if [ -z "$$LATEST" ]; then \
+		NEXT="v0.1.0"; \
+	else \
+		MAJOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f1); \
+		MINOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f2); \
+		PATCH=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f3 | cut -d- -f1); \
+		PATCH=$$((PATCH + 1)); \
+		NEXT="v$$MAJOR.$$MINOR.$$PATCH"; \
+	fi; \
+	echo "Latest tag: $${LATEST:-none}"; \
+	echo "Next tag:   $$NEXT"; \
+	echo ""; \
+	read -p "Create and push tag $$NEXT? [y/N] " CONFIRM; \
+	if [ "$$CONFIRM" = "y" ] || [ "$$CONFIRM" = "Y" ]; then \
+		git tag "$$NEXT" && \
+		git push origin "$$NEXT" && \
+		echo "Tag $$NEXT pushed — CI release will start automatically."; \
+	else \
+		echo "Aborted."; \
+	fi
 
 docker: ## Build Docker image
 	docker build -t kshark:$(VERSION) -t kshark:latest .
