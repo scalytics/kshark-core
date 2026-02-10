@@ -8,10 +8,11 @@ project_name: kshark
 before:
   hooks:
     - go mod tidy
+    - go vet ./...
 
 builds:
   - id: kshark
-    main: ./cmd/kshark/main.go
+    main: ./cmd/kshark
     binary: kshark
     env:
       - CGO_ENABLED=0
@@ -26,34 +27,51 @@ builds:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
 archives:
-  - format: tar.gz
-    # This will create a zip file for windows builds
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format: tar.gz
     format_overrides:
       - goos: windows
         format: zip
-    # You can add additional files to the archive here
     files:
       - LICENSE
       - README.md
       - client.properties.example
       - ai_config.json.example
+      - web/templates/**/*
 
 checksum:
   name_template: 'checksums.txt'
+  algorithm: sha256
 
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
   filters:
     exclude:
       - '^docs:'
       - '^test:'
+      - '^chore:'
 
-# The release section allows you to customize the GitHub Release page.
 release:
-  # You can change the name of the release from the tag.
-  name_template: "Release {{.Version}}"
-  # You can mark the release as a pre-release.
+  name_template: "kshark v{{.Version}}"
   prerelease: auto
+  header: |
+    ## kshark v{{.Version}}
+
+    Cross-platform Kafka connectivity diagnostic tool.
+  footer: |
+    ---
+    **Full Changelog**: https://github.com/scalytics/kshark-core/compare/{{ .PreviousTag }}...{{ .Tag }}

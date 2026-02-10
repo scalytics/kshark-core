@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-kshark
+/kshark
 kshark-*
 
 # Test binary, build with `go test -c`
@@ -27,4 +27,8 @@ client.properties
 license.key
 
 # Reports
+reports/
 analysis_report.html
+
+# GoReleaser
+dist/
