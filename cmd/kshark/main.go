@@ -1161,9 +1161,9 @@ func main() {
 		}
 	}
 
-	// Prepare and start scan animation in the background only if interactive
+	// Prepare and start scan animation in the background if stdout is a TTY
 	var startAnimation, doneAnimation chan bool
-	if !*yes && isTTY(os.Stdout) {
+	if isTTY(os.Stdout) {
 		startAnimation = make(chan bool)
 		doneAnimation = make(chan bool)
 		go animateSharkFin(startAnimation, doneAnimation)
