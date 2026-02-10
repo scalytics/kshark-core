@@ -3,7 +3,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: all build test vet clean snapshot docker help
+.PHONY: all build test vet clean snapshot release docker help
 
 all: vet build ## Run vet then build
 
@@ -22,6 +22,9 @@ clean: ## Remove build artifacts
 
 snapshot: ## Build a local snapshot release (no publish)
 	goreleaser release --snapshot --clean
+
+release: ## Run GoReleaser to publish a release (requires GITHUB_TOKEN and a git tag)
+	goreleaser release --clean
 
 docker: ## Build Docker image
 	docker build -t kshark:$(VERSION) -t kshark:latest .
