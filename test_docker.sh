@@ -15,6 +15,12 @@
 # 1. Make the script executable: chmod +x test_docker.sh
 # 2. Run the script: ./test_docker.sh
 
+# Build the Docker image if it doesn't exist locally
+if ! docker image inspect kshark:latest >/dev/null 2>&1; then
+  echo "Image 'kshark:latest' not found locally. Building..."
+  make docker
+fi
+
 # Create a directory for the reports if it doesn't exist
 mkdir -p reports
 
