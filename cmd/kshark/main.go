@@ -149,7 +149,7 @@ func buildAnalysisPrompt(report *Report) (string, string, error) {
 // writeAnalysisPromptMD saves the analysis prompt as a Markdown file so the user
 // can paste it into any AI chatbot (ChatGPT, Claude, Gemini, etc.) when no API key
 // is configured.
-func writeAnalysisPromptMD(report *Report) (string, error) {
+func writeAnalysisPromptMD(report *Report, reportDir string) (string, error) {
 	systemPrompt, userPrompt, err := buildAnalysisPrompt(report)
 	if err != nil {
 		return "", err
@@ -161,7 +161,9 @@ func writeAnalysisPromptMD(report *Report) (string, error) {
 	}
 	hostname = strings.Split(hostname, ".")[0]
 	timestamp := time.Now().Format("20060102_150405")
-	reportDir := "reports"
+	if reportDir == "" {
+		reportDir = "reports"
+	}
 
 	if err := os.MkdirAll(reportDir, 0755); err != nil {
 		return "", fmt.Errorf("could not create reports directory: %w", err)
@@ -958,13 +960,6 @@ func isTTY(file *os.File) bool {
 	return (fileInfo.Mode() & os.ModeCharDevice) != 0
 }
 
-// ---------- Licensing ----------
-
-func checkLicense() bool {
-	_, err := os.Stat("license.key")
-	return err == nil
-}
-
 func animateSharkFin(start <-chan bool, done chan bool) {
 	// Wait for the start signal
 	<-start
@@ -1081,8 +1076,8 @@ func main() {
 	propsPath := flag.String("props", "", "Path to client .properties")
 	topic := flag.String("topic", "", "Comma-separated list of topics to test (optional for metadata-only)")
 	group := flag.String("group", "", "Consumer group for probe (ephemeral by default)")
-	jsonOut := flag.String("json", "", "Write JSON report to file (premium feature)")
-	analyze := flag.Bool("analyze", false, "Analyze report with AI (premium feature)")
+	jsonOut := flag.String("json", "", "Write JSON report to file")
+	analyze := flag.Bool("analyze", false, "Analyze report with AI")
 	noAI := flag.Bool("no-ai", false, "Skip AI analysis")
 	provider := flag.String("provider", "", "Select AI provider from ai_config.json (e.g., openai, scalytics-connect)")
 	timeout := flag.Duration("timeout", 60*time.Second, "Global timeout for the entire scan")
@@ -1094,12 +1089,6 @@ func main() {
 	if *propsPath == "" {
 		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [--analyze]")
 		os.Exit(2)
-	}
-
-	hasLicense := checkLicense()
-	if (*jsonOut != "" || *analyze) && !hasLicense {
-		fmt.Fprintln(os.Stderr, "Error: --json and --analyze are premium features requiring a valid license.key file.")
-		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -1161,9 +1150,9 @@ func main() {
 		}
 	}
 
-	// Prepare and start scan animation in the background only if interactive
+	// Prepare and start scan animation in the background if stdout is a TTY
 	var startAnimation, doneAnimation chan bool
-	if !*yes && isTTY(os.Stdout) {
+	if isTTY(os.Stdout) {
 		startAnimation = make(chan bool)
 		doneAnimation = make(chan bool)
 		go animateSharkFin(startAnimation, doneAnimation)
@@ -1278,12 +1267,15 @@ endScan:
 	summarize(report)
 	printPretty(report)
 
+	// Determine the reports directory (same location as JSON report if specified)
+	reportsDir := "reports"
 	if *jsonOut != "" {
 		actualPath, err := writeJSON(*jsonOut, report)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing JSON report: %v\n", err)
 			os.Exit(1)
 		}
+		reportsDir = filepath.Dir(actualPath)
 		absPath, _ := filepath.Abs(actualPath)
 		fmt.Printf("JSON report written to %s\n", absPath)
 	}
@@ -1320,7 +1312,7 @@ endScan:
 		if needsFallback {
 			fmt.Fprintf(os.Stderr, "\nNote: %s\n", fallbackReason)
 			fmt.Println("Generating analysis prompt as Markdown file instead...")
-			mdPath, err := writeAnalysisPromptMD(report)
+			mdPath, err := writeAnalysisPromptMD(report, reportsDir)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing analysis prompt: %v\n", err)
 			} else {
@@ -1336,7 +1328,7 @@ endScan:
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error during AI analysis: %v\n", err)
 				fmt.Println("Falling back to saving analysis prompt as Markdown file...")
-				mdPath, err := writeAnalysisPromptMD(report)
+				mdPath, err := writeAnalysisPromptMD(report, reportsDir)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Error writing analysis prompt: %v\n", err)
 				} else {
