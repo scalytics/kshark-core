@@ -1020,7 +1020,7 @@ func parseTopics(raw string) []string {
 	return topics
 }
 
-func printScanPlan(props map[string]string, topics []string, diag bool) {
+func printScanPlan(props map[string]string, topics []string, diag bool, analyze bool, jsonOut string, aiProvider string, aiModel string) {
 	fmt.Println("\n--- Scan Plan ---")
 	fmt.Printf("Target Kafka Cluster: %s\n", props["bootstrap.servers"])
 	if len(topics) > 0 {
@@ -1028,6 +1028,9 @@ func printScanPlan(props map[string]string, topics []string, diag bool) {
 	} else {
 		fmt.Println("Target Topics: (none, metadata checks only)")
 	}
+
+	fmt.Printf("\nEdition: Open Source (non-commercial)\n")
+	fmt.Printf("Version: %s\n", version)
 
 	fmt.Println("\nChecks to be performed:")
 	fmt.Println("  - Connectivity Checks (DNS, TCP, TLS) for each broker.")
@@ -1044,6 +1047,23 @@ func printScanPlan(props map[string]string, topics []string, diag bool) {
 	if diag {
 		fmt.Println("  - Network Diagnostics (Traceroute, MTU).")
 	}
+
+	if analyze {
+		if aiProvider != "" && aiModel != "" {
+			fmt.Printf("\nAI Analysis: enabled (provider: %s, model: %s)\n", aiProvider, aiModel)
+		} else {
+			fmt.Println("\nAI Analysis: enabled (no AI provider configured, will generate prompt file)")
+		}
+	}
+
+	if jsonOut != "" {
+		safePath, _ := createSafeReportPath(jsonOut, "reports")
+		absPath, _ := filepath.Abs(safePath)
+		fmt.Printf("JSON Report: %s\n", absPath)
+	}
+
+	reportsDir, _ := filepath.Abs("reports")
+	fmt.Printf("Reports & Prompts: %s\n", reportsDir)
 	fmt.Println("-------------------")
 }
 
@@ -1105,8 +1125,25 @@ func main() {
 
 	topics := parseTopics(*topic)
 
+	// Peek at AI config for scan plan display
+	var aiProviderName, aiModel string
+	if *analyze && !*noAI {
+		if aiCfg, err := loadAIConfig(); err == nil {
+			pName := aiCfg.DefaultProvider
+			if *provider != "" {
+				pName = *provider
+			}
+			if pCfg, ok := aiCfg.Providers[pName]; ok {
+				if !strings.HasPrefix(pCfg.APIKey, "YOUR_") && pCfg.APIKey != "" {
+					aiProviderName = pName
+					aiModel = pCfg.Model
+				}
+			}
+		}
+	}
+
 	// Print the plan and wait for confirmation if not running in non-interactive mode
-	printScanPlan(props, topics, *diag)
+	printScanPlan(props, topics, *diag, *analyze, *jsonOut, aiProviderName, aiModel)
 
 	if !*yes {
 		reader := bufio.NewReader(os.Stdin)
