@@ -455,7 +455,9 @@ func setDefault(p map[string]string, k, v string) {
 // ---------- DNS, TCP, TLS ----------
 
 func checkDNS(r *Report, host string, component string) {
+	start := time.Now()
 	_, err := net.LookupHost(host)
+	logf("step dns host=%s dur=%s err=%v", host, time.Since(start).Truncate(time.Millisecond), err)
 	if err != nil {
 		addRow(r, Row{component, host, L3, FAIL, fmt.Sprintf("DNS lookup failed: %v", err),
 			"Check /etc/hosts, DNS server, split-horizon/VPN search domains."})
@@ -468,11 +470,13 @@ func checkTCP(r *Report, addr string, component string, timeout time.Duration) n
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
+		logf("step tcp addr=%s dur=%s err=%v", addr, time.Since(start).Truncate(time.Millisecond), err)
 		addRow(r, Row{component, addr, L4, FAIL, fmt.Sprintf("TCP connect failed: %v", err),
 			"Firewall, SG/NACL/NSG, LB listeners, PodNetworkPolicy, or routing."})
 		return nil
 	}
 	lat := time.Since(start)
+	logf("step tcp addr=%s dur=%s err=nil", addr, lat.Truncate(time.Millisecond))
 	addRow(r, Row{component, addr, L4, OK, fmt.Sprintf("Connected in %s", lat.Truncate(time.Millisecond)), ""})
 	return conn
 }
@@ -522,12 +526,15 @@ func wrapTLS(r *Report, base net.Conn, tlsConf *tls.Config, component, addr stri
 		return base
 	}
 	client := tls.Client(base, tlsConf)
+	start := time.Now()
 	if err := client.Handshake(); err != nil {
+		logf("step tls addr=%s dur=%s err=%v", addr, time.Since(start).Truncate(time.Millisecond), err)
 		addRow(r, Row{component, addr, L56, FAIL, fmt.Sprintf("TLS handshake failed: %v", err),
 			"Check CA chain, SNI/hostname, client cert/key, and server certificate validity."})
 		return nil
 	}
 	state := client.ConnectionState()
+	logf("step tls addr=%s dur=%s err=nil", addr, time.Since(start).Truncate(time.Millisecond))
 	exp := earliestExpiry(&state)
 	detail := fmt.Sprintf("TLS %x; peer=%s; expires=%s", state.Version, peerCN(&state), exp.Format("2006-01-02"))
 	if time.Until(exp) < (30 * 24 * time.Hour) {
@@ -658,16 +665,22 @@ func kafkaConn(r *Report, p map[string]string, brokerAddr string) (*kafka.Conn, 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	dialStart := time.Now()
 	conn, err := dialer.DialContext(ctx, "tcp", brokerAddr)
 	if err != nil {
+		logf("step kafka.dial addr=%s dur=%s err=%v", brokerAddr, time.Since(dialStart).Truncate(time.Millisecond), err)
 		addRow(r, Row{"kafka", brokerAddr, L7, FAIL, fmt.Sprintf("broker dial failed: %v", err), "Auth/TLS mismatch or listener not exposed."})
 		return nil, err
 	}
+	logf("step kafka.dial addr=%s dur=%s err=nil", brokerAddr, time.Since(dialStart).Truncate(time.Millisecond))
+	apiStart := time.Now()
 	if _, err := conn.ApiVersions(); err != nil {
+		logf("step kafka.apiversions addr=%s dur=%s err=%v", brokerAddr, time.Since(apiStart).Truncate(time.Millisecond), err)
 		addRow(r, Row{"kafka", brokerAddr, L7, FAIL, fmt.Sprintf("ApiVersions failed: %v", err), "Broker incompatible or proxy interfering."})
 		_ = conn.Close()
 		return nil, err
 	}
+	logf("step kafka.apiversions addr=%s dur=%s err=nil", brokerAddr, time.Since(apiStart).Truncate(time.Millisecond))
 	addRow(r, Row{"kafka", brokerAddr, L7, OK, "ApiVersions OK", ""})
 	return conn, nil
 }
@@ -679,11 +692,14 @@ func checkTopic(r *Report, p map[string]string, brokerAddr, topic string) {
 	}
 	defer conn.Close()
 
+	partsStart := time.Now()
 	parts, err := conn.ReadPartitions()
 	if err != nil {
+		logf("step kafka.readpartitions addr=%s dur=%s err=%v", brokerAddr, time.Since(partsStart).Truncate(time.Millisecond), err)
 		addRow(r, Row{"kafka", brokerAddr, L7, FAIL, policyHint("ReadPartitions", err), hint(err)})
 		return
 	}
+	logf("step kafka.readpartitions addr=%s dur=%s err=nil", brokerAddr, time.Since(partsStart).Truncate(time.Millisecond))
 	var found bool
 	var leaders int
 	for _, pt := range parts {
@@ -701,7 +717,7 @@ func checkTopic(r *Report, p map[string]string, brokerAddr, topic string) {
 	addRow(r, Row{"kafka", topic, L7, OK, fmt.Sprintf("Topic visible; leader partitions=%d", leaders), ""})
 }
 
-func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bootstrap, topic, group string) {
+func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bootstrap, topic, group string, opTimeout time.Duration) {
 	if topic == "" {
 		addRow(r, Row{"kafka", "(no topic)", L7, SKIP, "Produce/Consume skipped", ""})
 		return
@@ -712,13 +728,20 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		addRow(r, Row{"kafka", topic, L7, FAIL, fmt.Sprintf("dialer: %v", err), "Check tls/sasl settings."})
 		return
 	}
+	if opTimeout <= 0 {
+		opTimeout = 10 * time.Second
+	}
+	leaders := topicLeaders(p, bootstrap, topic)
+	if len(leaders) == 0 {
+		logf("step kafka.leaders topic=%s err=unavailable", topic)
+	}
 	w := &kafka.Writer{
 		Addr:         kafka.TCP(strings.Split(bootstrap, ",")...),
 		Topic:        topic,
-		Balancer:     &kafka.LeastBytes{},
+		Balancer:     &loggingBalancer{base: &kafka.LeastBytes{}, topic: topic, leaders: leaders},
 		RequiredAcks: kafka.RequireOne,
 		Async:        false,
-		Transport:    &kafka.Transport{SASL: dialer.SASLMechanism, TLS: dialer.TLS, DialTimeout: 8 * time.Second},
+		Transport:    &kafka.Transport{SASL: dialer.SASLMechanism, TLS: dialer.TLS, DialTimeout: opTimeout},
 	}
 	defer w.Close()
 
@@ -730,12 +753,15 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		Time:    time.Now(),
 	}
 
-	writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+	writeStart := time.Now()
+	writeCtx, writeCancel := context.WithTimeout(ctx, opTimeout)
 	defer writeCancel()
 	if err := w.WriteMessages(writeCtx, msg); err != nil {
+		logf("step kafka.produce topic=%s dur=%s err=%v", topic, time.Since(writeStart).Truncate(time.Millisecond), err)
 		addRow(r, Row{"kafka", topic, L7, FAIL, policyHint("Produce", err), hint(err)})
 		return
 	}
+	logf("step kafka.produce topic=%s dur=%s err=nil", topic, time.Since(writeStart).Truncate(time.Millisecond))
 	addRow(r, Row{"kafka", topic, L7, OK, "Produce OK", ""})
 
 	if group == "" {
@@ -750,13 +776,16 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 	})
 	defer reader.Close()
 
-	readCtx, readCancel := context.WithTimeout(ctx, 10*time.Second)
+	readStart := time.Now()
+	readCtx, readCancel := context.WithTimeout(ctx, opTimeout)
 	defer readCancel()
 	rec, err := reader.ReadMessage(readCtx)
 	if err != nil {
+		logf("step kafka.consume topic=%s dur=%s err=%v", topic, time.Since(readStart).Truncate(time.Millisecond), err)
 		addRow(r, Row{"kafka", topic, L7, FAIL, policyHint("Consume", err), "Grant Read on topic and Group Read/Describe; check prefixes."})
 		return
 	}
+	logf("step kafka.consume topic=%s dur=%s err=nil", topic, time.Since(readStart).Truncate(time.Millisecond))
 	addRow(r, Row{"kafka", topic, L7, OK, fmt.Sprintf("Consume OK (offset %d)", rec.Offset), ""})
 }
 
@@ -895,6 +924,63 @@ func initScanLog(path string) (*os.File, error) {
 	return f, nil
 }
 
+type loggingBalancer struct {
+	base    kafka.Balancer
+	topic   string
+	leaders map[int]kafka.Broker
+}
+
+func (b *loggingBalancer) Balance(msg kafka.Message, partitions ...int) int {
+	if b.base == nil {
+		b.base = &kafka.LeastBytes{}
+	}
+	partition := b.base.Balance(msg, partitions...)
+	if len(b.leaders) > 0 {
+		if leader, ok := b.leaders[partition]; ok {
+			logf("step kafka.balance topic=%s partition=%d leader=%s:%d broker_id=%d", b.topic, partition, leader.Host, leader.Port, leader.ID)
+			return partition
+		}
+	}
+	logf("step kafka.balance topic=%s partition=%d leader=unknown", b.topic, partition)
+	return partition
+}
+
+func topicLeaders(p map[string]string, bootstrap, topic string) map[int]kafka.Broker {
+	first := strings.TrimSpace(strings.Split(bootstrap, ",")[0])
+	hostForSNI := firstHost(first)
+	dialer, _, err := dialerFromProps(p, hostForSNI)
+	if err != nil {
+		logf("step kafka.leaders dialer err=%v", err)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	conn, err := dialer.DialContext(ctx, "tcp", first)
+	if err != nil {
+		logf("step kafka.leaders dial addr=%s dur=%s err=%v", first, time.Since(start).Truncate(time.Millisecond), err)
+		return nil
+	}
+	defer conn.Close()
+	logf("step kafka.leaders dial addr=%s dur=%s err=nil", first, time.Since(start).Truncate(time.Millisecond))
+
+	partsStart := time.Now()
+	parts, err := conn.ReadPartitions()
+	if err != nil {
+		logf("step kafka.leaders readpartitions dur=%s err=%v", time.Since(partsStart).Truncate(time.Millisecond), err)
+		return nil
+	}
+	logf("step kafka.leaders readpartitions dur=%s err=nil", time.Since(partsStart).Truncate(time.Millisecond))
+
+	leaders := make(map[int]kafka.Broker)
+	for _, pt := range parts {
+		if pt.Topic == topic {
+			leaders[pt.ID] = pt.Leader
+		}
+	}
+	return leaders
+}
+
 // ---------- Schema Registry / REST ----------
 
 func httpClientFromTLS(tlsConf *tls.Config, timeout time.Duration) *http.Client {
@@ -908,9 +994,12 @@ func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string) {
 		return
 	}
 	host := extractHost(url)
+	dnsStart := time.Now()
 	if _, err := net.LookupHost(host); err != nil {
+		logf("step schema.dns host=%s dur=%s err=%v", host, time.Since(dnsStart).Truncate(time.Millisecond), err)
 		addRow(r, Row{"schema-reg", host, L3, FAIL, "DNS failed", "Fix DNS/VPN."})
 	} else {
+		logf("step schema.dns host=%s dur=%s err=nil", host, time.Since(dnsStart).Truncate(time.Millisecond))
 		addRow(r, Row{"schema-reg", host, L3, OK, "Resolved host", ""})
 	}
 	tlsConf, _, err := tlsConfigFromProps(p, host)
@@ -926,11 +1015,14 @@ func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string) {
 			req.SetBasicAuth(up[0], up[1])
 		}
 	}
+	httpStart := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
+		logf("step schema.http url=%s dur=%s err=%v", url, time.Since(httpStart).Truncate(time.Millisecond), err)
 		addRow(r, Row{"schema-reg", url, HTTP, FAIL, fmt.Sprintf("GET /subjects failed: %v", err), "TLS/host/network or auth."})
 		return
 	}
+	logf("step schema.http url=%s dur=%s err=nil status=%d", url, time.Since(httpStart).Truncate(time.Millisecond), resp.StatusCode)
 	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	switch resp.StatusCode {
@@ -984,21 +1076,30 @@ func bestEffortTraceroute(r *Report, host string) {
 		return
 	}
 	// Linux: traceroute or tracepath; macOS: traceroute; Windows: tracert
+	start := time.Now()
 	if out, err := runCmdIfExists("traceroute", "-n", "-w", "2", "-q", "1", host); err == nil {
+		logf("step traceroute host=%s dur=%s err=nil", host, time.Since(start).Truncate(time.Millisecond))
 		addRow(r, Row{"diag", host, DIAG, OK, "traceroute OK (see JSON)", ""})
 		addRow(r, Row{"diag", host, DIAG, SKIP, trimLines(out, 15), "Full output in JSON if -json used."})
 		return
 	}
+	logf("step traceroute host=%s dur=%s err=notfound", host, time.Since(start).Truncate(time.Millisecond))
+	start = time.Now()
 	if out, err := runCmdIfExists("tracepath", host); err == nil {
+		logf("step tracepath host=%s dur=%s err=nil", host, time.Since(start).Truncate(time.Millisecond))
 		addRow(r, Row{"diag", host, DIAG, OK, "tracepath OK (see JSON)", ""})
 		addRow(r, Row{"diag", host, DIAG, SKIP, trimLines(out, 15), "Full output in JSON if -json used."})
 		return
 	}
+	logf("step tracepath host=%s dur=%s err=notfound", host, time.Since(start).Truncate(time.Millisecond))
+	start = time.Now()
 	if out, err := runCmdIfExists("tracert", "-d", "-w", "2000", host); err == nil {
+		logf("step tracert host=%s dur=%s err=nil", host, time.Since(start).Truncate(time.Millisecond))
 		addRow(r, Row{"diag", host, DIAG, OK, "tracert OK (see JSON)", ""})
 		addRow(r, Row{"diag", host, DIAG, SKIP, trimLines(out, 15), "Full output in JSON if -json used."})
 		return
 	}
+	logf("step tracert host=%s dur=%s err=notfound", host, time.Since(start).Truncate(time.Millisecond))
 	addRow(r, Row{"diag", host, DIAG, SKIP, "No traceroute tool found", "Install traceroute/tracepath (Linux), or use tracert (Windows)."})
 }
 
@@ -1008,23 +1109,29 @@ func mtuCheck(r *Report, host string) {
 		return
 	}
 	// Linux tracepath usually reports pMTU; otherwise try ping DF
+	start := time.Now()
 	if out, err := runCmdIfExists("tracepath", host); err == nil && strings.Contains(out, "pmtu") {
+		logf("step mtu.tracepath host=%s dur=%s err=nil", host, time.Since(start).Truncate(time.Millisecond))
 		addRow(r, Row{"diag", host, DIAG, OK, "pMTU detected via tracepath", ""})
 		return
 	}
+	logf("step mtu.tracepath host=%s dur=%s err=skip", host, time.Since(start).Truncate(time.Millisecond))
 	// Try ping DF with decreasing sizes (Linux/macOS)
 	for _, sz := range []int{1472, 1464, 1452, 1400, 1200, 1000} {
 		var out string
 		var err error
+		pingStart := time.Now()
 		if runtime.GOOS == "darwin" {
 			out, err = runCmdIfExists("ping", "-D", "-s", strconv.Itoa(sz), "-c", "1", host)
 		} else {
 			out, err = runCmdIfExists("ping", "-M", "do", "-s", strconv.Itoa(sz), "-c", "1", host)
 		}
 		if err == nil && strings.Contains(strings.ToLower(out), "1 packets transmitted") {
+			logf("step mtu.ping host=%s size=%d dur=%s err=nil", host, sz, time.Since(pingStart).Truncate(time.Millisecond))
 			addRow(r, Row{"diag", host, DIAG, OK, fmt.Sprintf("MTU ok at payload %d", sz), ""})
 			return
 		}
+		logf("step mtu.ping host=%s size=%d dur=%s err=%v", host, sz, time.Since(pingStart).Truncate(time.Millisecond), err)
 	}
 	addRow(r, Row{"diag", host, DIAG, SKIP, "MTU probe inconclusive", "Run tracepath or adjust network MTU if you see fragmentation."})
 }
@@ -1167,6 +1274,7 @@ func main() {
 	noAI := flag.Bool("no-ai", false, "Skip AI analysis")
 	provider := flag.String("provider", "", "Select AI provider from ai_config.json (e.g., openai, scalytics-connect)")
 	timeout := flag.Duration("timeout", 60*time.Second, "Global timeout for the entire scan")
+	opTimeout := flag.Duration("op-timeout", 10*time.Second, "Timeout for Kafka produce/consume operations")
 	preset := flag.String("preset", "", "Preset: cc-plain|self-scram")
 	diag := flag.Bool("diag", true, "Run traceroute/MTU diagnostics if tools are available")
 	logPath := flag.String("log", "", "Write detailed scan log to file (default: reports/kshark-<timestamp>.log)")
@@ -1174,7 +1282,7 @@ func main() {
 	flag.Parse()
 
 	if *propsPath == "" {
-		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [--analyze]")
+		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [-op-timeout 10s] [-log file] [--analyze]")
 		os.Exit(2)
 	}
 
@@ -1194,8 +1302,8 @@ func main() {
 		absPath, _ := filepath.Abs(*logPath)
 		fmt.Printf("Log file: %s\n", absPath)
 	}
-	logf("scan start props=%s timeout=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
-		*propsPath, timeout.String(), *diag, *analyze, *jsonOut, *topic, *group, *preset)
+	logf("scan start props=%s timeout=%s op_timeout=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
+		*propsPath, timeout.String(), opTimeout.String(), *diag, *analyze, *jsonOut, *topic, *group, *preset)
 
 	props, err := loadProperties(*propsPath)
 	if err != nil {
@@ -1327,7 +1435,7 @@ func main() {
 			goto endScan
 		default:
 			logf("produce/consume start topic=%s group=%s", t, *group)
-			probeProduceConsume(ctx, report, props, bootstrap, t, *group)
+			probeProduceConsume(ctx, report, props, bootstrap, t, *group, *opTimeout)
 		}
 	}
 
@@ -1352,10 +1460,13 @@ endScan:
 		} else {
 			client := httpClientFromTLS(tlsConf, 8*time.Second)
 			req, _ := http.NewRequest("GET", strings.TrimRight(rest, "/")+"/topics", nil)
+			httpStart := time.Now()
 			resp, err := client.Do(req)
 			if err != nil {
+				logf("step rest.http url=%s dur=%s err=%v", rest, time.Since(httpStart).Truncate(time.Millisecond), err)
 				addRow(report, Row{"rest-proxy", rest, HTTP, FAIL, fmt.Sprintf("GET /topics failed: %v", err), "Check listener/auth."})
 			} else {
+				logf("step rest.http url=%s dur=%s err=nil status=%d", rest, time.Since(httpStart).Truncate(time.Millisecond), resp.StatusCode)
 				io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
 				if resp.StatusCode == 200 {
