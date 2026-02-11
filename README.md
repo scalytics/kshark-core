@@ -4,7 +4,7 @@
 
 **A powerful command-line diagnostic tool for Apache Kafka connectivity**
 
-`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire client-to-broker communication path. It systematically tests every layer from DNS resolution through TLS security to Kafka protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
+`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire agent-to-broker communication path. It systematically tests every layer from DNS resolution through TLS security to Kafka protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
