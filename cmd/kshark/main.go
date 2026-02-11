@@ -923,7 +923,7 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		Dialer:    dialer,
 	})
 	defer reader.Close()
-	if err := reader.SetOffset(kafka.LastOffset); err != nil {
+	if err := reader.SetOffset(kafka.FirstOffset); err != nil {
 		logf("step kafka.consume topic=%s dur=0ms err=%v", topic, err)
 		addRow(r, Row{"kafka", topic, L7, FAIL, fmt.Sprintf("Consume seek failed: %v", err), "Check topic/partition exists."})
 		return
