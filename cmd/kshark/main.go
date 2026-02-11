@@ -799,8 +799,11 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		addRow(r, Row{"kafka", "(no topic)", L7, SKIP, "Produce/Consume skipped", ""})
 		return
 	}
-	hostForSNI := firstHost(bootstrap)
-	dialer, _, err := dialerFromProps(p, hostForSNI)
+	// Empty ServerName so the Dialer auto-derives it from each broker address.
+	// A hardcoded bootstrap ServerName causes wrong SNI when the Reader connects
+	// to partition leaders or group coordinators on Confluent Cloud, making the
+	// load balancer route the connection to the wrong broker.
+	dialer, _, err := dialerFromProps(p, "")
 	if err != nil {
 		addRow(r, Row{"kafka", topic, L7, FAIL, fmt.Sprintf("dialer: %v", err), "Check tls/sasl settings."})
 		return
@@ -882,18 +885,49 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		return
 	}
 
-	if group == "" {
-		group = fmt.Sprintf("kwire-%d", time.Now().UnixNano())
+	// Use direct partition read (no consumer group) for the consume probe.
+	// Consumer group coordination (JoinGroup/SyncGroup/Heartbeat) adds seconds
+	// of overhead on Confluent Cloud and is unnecessary for a connectivity check.
+	// If a group is explicitly requested, honour it; otherwise probe partition 0.
+	if group != "" {
+		reader := kafka.NewReader(kafka.ReaderConfig{
+			Brokers:     strings.Split(bootstrap, ","),
+			Topic:       topic,
+			GroupID:     group,
+			StartOffset: startOffset,
+			MaxWait:     3 * time.Second,
+			Dialer:      dialer,
+		})
+		defer reader.Close()
+
+		readStart := time.Now()
+		readCtx, readCancel := context.WithTimeout(ctx, consumeTimeout)
+		defer readCancel()
+		rec, err := reader.ReadMessage(readCtx)
+		if err != nil {
+			logf("step kafka.consume topic=%s group=%s dur=%s err=%v", topic, group, time.Since(readStart).Truncate(time.Millisecond), err)
+			addRow(r, Row{"kafka", topic, L7, FAIL, policyHint("Consume", err), "Grant Read on topic and Group Read/Describe; check prefixes."})
+			return
+		}
+		logf("step kafka.consume topic=%s group=%s dur=%s err=nil", topic, group, time.Since(readStart).Truncate(time.Millisecond))
+		addRow(r, Row{"kafka", topic, L7, OK, fmt.Sprintf("Consume OK (offset %d)", rec.Offset), ""})
+		return
 	}
+
+	// Direct partition fetch — fast, no group coordination needed.
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:     strings.Split(bootstrap, ","),
-		Topic:       topic,
-		GroupID:     group,
-		StartOffset: startOffset,
-		MaxWait:     3 * time.Second,
-		Dialer:      dialer,
+		Brokers:   strings.Split(bootstrap, ","),
+		Topic:     topic,
+		Partition: 0,
+		MaxWait:   3 * time.Second,
+		Dialer:    dialer,
 	})
 	defer reader.Close()
+	if err := reader.SetOffset(kafka.LastOffset); err != nil {
+		logf("step kafka.consume topic=%s dur=0ms err=%v", topic, err)
+		addRow(r, Row{"kafka", topic, L7, FAIL, fmt.Sprintf("Consume seek failed: %v", err), "Check topic/partition exists."})
+		return
+	}
 
 	readStart := time.Now()
 	readCtx, readCancel := context.WithTimeout(ctx, consumeTimeout)
