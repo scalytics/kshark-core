@@ -11,6 +11,46 @@
 
 ---
 
+## 🤖 Built for AI Agents
+
+**Tools are the difference between AI assistants and AI operators.**
+
+Without reliable, structured tools, AI agents are limited to conversation. With them, they become autonomous operators capable of real diagnostic work. `kshark` is designed from the ground up to be agent-executable:
+
+- **Deterministic Output:** Structured JSON and HTML reports that agents can parse, analyze, and act upon
+- **Layered Diagnostics:** Clear failure isolation (L3→L4→L5-6→L7) so agents know exactly where problems occur
+- **Zero Human Intervention:** Fully automated execution with `-y` flag, timeout controls, and exit codes
+- **Rich Context:** Every test returns actionable data — not just pass/fail, but metrics, timestamps, and error details
+
+**Why This Matters:**
+
+Human operators diagnose Kafka issues by running multiple commands: `nslookup`, `telnet`, `openssl s_client`, `kafka-console-producer`. They correlate failures, infer root causes, and retry with different parameters.
+
+AI agents need to do the same work — but they need tools that package that workflow into a single, reliable interface. `kshark` is that interface for Kafka connectivity validation.
+
+When an agent needs to validate a client configuration, diagnose a connection failure, or verify topic accessibility, `kshark` provides the structured, comprehensive output required to make informed decisions and take corrective action.
+
+**This is the future of infrastructure operations:** agents equipped with purpose-built diagnostic tools, operating autonomously to validate, diagnose, and remediate connectivity issues before they impact production.
+
+[... full content matches the captured read above ...]
+
+**Made with ❤️ for the Kafka community**
+
+
+
+# kshark
+
+![kshark title image](docs/images/title.png)
+
+**A powerful command-line diagnostic tool for Apache Kafka connectivity**
+
+`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire client-to-broker communication path. It systematically tests every layer from DNS resolution through TLS security to Kafka protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
+
+---
+
 ## Table of Contents
 
 - [Key Features](#key-features)
