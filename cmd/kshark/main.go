@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -324,11 +325,15 @@ type CheckStats struct {
 
 // ---------- Utilities ----------
 
+var scanLog *log.Logger
+
 func addRow(r *Report, row Row) {
 	if row.Status == FAIL {
 		r.HasFailed = true
 	}
 	r.Rows = append(r.Rows, row)
+	logf("row component=%s target=%s layer=%s status=%s detail=%q hint=%q",
+		row.Component, row.Target, row.Layer, row.Status, row.Detail, row.Hint)
 }
 
 func summarize(r *Report) {
@@ -769,6 +774,23 @@ func policyHint(op string, err error) string {
 	if err == nil {
 		return op + " OK"
 	}
+	if ke, ok := kafkaErrorCode(err); ok {
+		switch ke {
+		case kafka.TopicAuthorizationFailed:
+			return op + " failed: missing topic ACL"
+		case kafka.GroupAuthorizationFailed:
+			return op + " failed: missing group ACL"
+		case kafka.SASLAuthenticationFailed:
+			return op + " failed: SASL auth failure"
+		case kafka.RequestTimedOut:
+			return op + " failed: broker request timeout"
+		case kafka.LeaderNotAvailable, kafka.NotLeaderForPartition, kafka.GroupCoordinatorNotAvailable, kafka.NotCoordinatorForGroup:
+			return op + " failed: leader/coord not available"
+		}
+	}
+	if isTimeout(err) {
+		return op + " failed: timeout (" + err.Error() + ")"
+	}
 	em := err.Error()
 	switch {
 	case containsAny(em, "TOPIC_AUTHORIZATION_FAILED", "Topic authorization failed"):
@@ -786,6 +808,25 @@ func policyHint(op string, err error) string {
 func hint(err error) string {
 	if err == nil {
 		return ""
+	}
+	if ke, ok := kafkaErrorCode(err); ok {
+		switch ke {
+		case kafka.TopicAuthorizationFailed:
+			return "Missing topic ACL: Write/Describe for produce; Read/Describe for consume."
+		case kafka.GroupAuthorizationFailed:
+			return "Missing group ACL: Read/Describe on group."
+		case kafka.SASLAuthenticationFailed:
+			return "Verify sasl.mechanism, credentials, clocks (JWT), and listener SASL config."
+		case kafka.RequestTimedOut:
+			return "Broker request timed out; check broker load, network path, and required.acks."
+		case kafka.LeaderNotAvailable, kafka.NotLeaderForPartition:
+			return "Leader not available; check broker health and metadata propagation."
+		case kafka.GroupCoordinatorNotAvailable, kafka.NotCoordinatorForGroup:
+			return "Group coordinator not available; check group/offsets topic health."
+		}
+	}
+	if isTimeout(err) {
+		return "Client timeout (10s): check network path, firewall, DNS, TLS/SNI, or advertised.listeners."
 	}
 	em := err.Error()
 	switch {
@@ -807,6 +848,51 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+func isTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	em := strings.ToLower(err.Error())
+	return strings.Contains(em, "deadline exceeded") || strings.Contains(em, "i/o timeout")
+}
+
+func kafkaErrorCode(err error) (kafka.Error, bool) {
+	var ke kafka.Error
+	if errors.As(err, &ke) {
+		return ke, true
+	}
+	return 0, false
+}
+
+func logf(format string, args ...any) {
+	if scanLog == nil {
+		return
+	}
+	scanLog.Printf(format, args...)
+}
+
+func initScanLog(path string) (*os.File, error) {
+	if path == "" {
+		return nil, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	scanLog = log.New(f, "kshark ", log.LstdFlags|log.Lmicroseconds)
+	return f, nil
 }
 
 // ---------- Schema Registry / REST ----------
@@ -1083,6 +1169,7 @@ func main() {
 	timeout := flag.Duration("timeout", 60*time.Second, "Global timeout for the entire scan")
 	preset := flag.String("preset", "", "Preset: cc-plain|self-scram")
 	diag := flag.Bool("diag", true, "Run traceroute/MTU diagnostics if tools are available")
+	logPath := flag.String("log", "", "Write detailed scan log to file (default: reports/kshark-<timestamp>.log)")
 	yes := flag.Bool("y", false, "Skip interactive confirmation and proceed with the scan")
 	flag.Parse()
 
@@ -1095,6 +1182,20 @@ func main() {
 	defer cancel()
 
 	report := &Report{StartedAt: time.Now()}
+
+	if *logPath == "" {
+		*logPath = filepath.Join("reports", fmt.Sprintf("kshark-%s.log", time.Now().Format("20060102-150405")))
+	}
+	logFile, err := initScanLog(*logPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open log file: %v\n", err)
+	} else if logFile != nil {
+		defer logFile.Close()
+		absPath, _ := filepath.Abs(*logPath)
+		fmt.Printf("Log file: %s\n", absPath)
+	}
+	logf("scan start props=%s timeout=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
+		*propsPath, timeout.String(), *diag, *analyze, *jsonOut, *topic, *group, *preset)
 
 	props, err := loadProperties(*propsPath)
 	if err != nil {
@@ -1111,8 +1212,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "bootstrap.servers missing")
 		os.Exit(1)
 	}
+	logf("bootstrap.servers=%s", bootstrap)
 
 	topics := parseTopics(*topic)
+	logf("topics=%v", topics)
 
 	// Peek at AI config for scan plan display
 	var aiProviderName, aiModel string
@@ -1175,10 +1278,12 @@ func main() {
 			addRow(report, Row{"kafka", b, L3, FAIL, "Invalid host:port", "Fix bootstrap.servers format (host:port)."})
 			continue
 		}
+		logf("broker check start host=%s port=%s", host, port)
 		checkDNS(report, host, "kafka")
 		addr := net.JoinHostPort(host, port)
 		conn := checkTCP(report, addr, "kafka", 8*time.Second) // Keep individual dial timeout short
 		if conn == nil {
+			logf("broker check failed tcp addr=%s", addr)
 			continue
 		}
 		// TLS handshake probe (if configured)
@@ -1192,15 +1297,18 @@ func main() {
 		if tlsConf != nil {
 			secured = wrapTLS(report, conn, tlsConf, "kafka", addr)
 			if secured == nil {
+				logf("broker check failed tls addr=%s", addr)
 				continue
 			}
 		} else {
 			addRow(report, Row{"kafka", addr, L56, SKIP, "PLAINTEXT (no TLS)", "Prefer SSL/SASL_SSL."})
 		}
 		_ = secured.Close()
+		logf("broker check ok addr=%s", addr)
 
 		// Kafka protocol: ApiVersions/Metadata + topic visibility
 		for _, t := range topics {
+			logf("topic metadata check topic=%s broker=%s", t, addr)
 			checkTopic(report, props, addr, t)
 		}
 
@@ -1218,6 +1326,7 @@ func main() {
 			addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before produce/consume", ""})
 			goto endScan
 		default:
+			logf("produce/consume start topic=%s group=%s", t, *group)
 			probeProduceConsume(ctx, report, props, bootstrap, t, *group)
 		}
 	}
@@ -1228,12 +1337,14 @@ func main() {
 		addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before schema registry check", ""})
 		goto endScan
 	default:
+		logf("schema registry check start")
 		checkSchemaRegistry(ctx, report, props)
 	}
 
 endScan:
 	// Optional REST Proxy: set rest.proxy.url=...
 	if rest := strings.TrimSpace(props["rest.proxy.url"]); rest != "" {
+		logf("rest proxy check start url=%s", rest)
 		checkDNS(report, extractHost(rest), "rest-proxy")
 		tlsConf, _, err := tlsConfigFromProps(props, extractHost(rest))
 		if err != nil {
@@ -1264,6 +1375,7 @@ endScan:
 	}
 
 	report.FinishedAt = time.Now()
+	logf("scan finished duration=%s failed=%t", report.FinishedAt.Sub(report.StartedAt), report.HasFailed)
 	summarize(report)
 	printPretty(report)
 
