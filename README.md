@@ -32,19 +32,7 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 
 **This is the future of infrastructure operations:** agents equipped with purpose-built diagnostic tools, operating autonomously to validate, diagnose, and remediate connectivity issues before they impact production.
 
-[... full content matches the captured read above ...]
-
 **Made with ❤️ for the Kafka community**
-
-
-
-# kshark
-
-![kshark title image](docs/images/title.png)
-
-**A powerful command-line diagnostic tool for Apache Kafka connectivity**
-
-`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire client-to-broker communication path. It systematically tests every layer from DNS resolution through TLS security to Kafka protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
