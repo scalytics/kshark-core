@@ -27,6 +27,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -656,14 +657,17 @@ func dialerFromProps(p map[string]string, hostForSNI string) (*kafka.Dialer, str
 
 // ---------- Kafka helpers & policy hints ----------
 
-func kafkaConn(r *Report, p map[string]string, brokerAddr string) (*kafka.Conn, error) {
+func kafkaConn(r *Report, p map[string]string, brokerAddr string, timeout time.Duration) (*kafka.Conn, error) {
 	host, _, _ := net.SplitHostPort(brokerAddr)
 	dialer, _, err := dialerFromProps(p, host)
 	if err != nil {
 		addRow(r, Row{"kafka", brokerAddr, L7, FAIL, fmt.Sprintf("dialer error: %v", err), "Check security.protocol & sasl.* settings."})
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	dialStart := time.Now()
 	conn, err := dialer.DialContext(ctx, "tcp", brokerAddr)
@@ -685,8 +689,8 @@ func kafkaConn(r *Report, p map[string]string, brokerAddr string) (*kafka.Conn, 
 	return conn, nil
 }
 
-func checkTopic(r *Report, p map[string]string, brokerAddr, topic string) {
-	conn, err := kafkaConn(r, p, brokerAddr)
+func checkTopic(r *Report, p map[string]string, brokerAddr, topic string, timeout time.Duration) {
+	conn, err := kafkaConn(r, p, brokerAddr, timeout)
 	if err != nil {
 		return
 	}
@@ -717,7 +721,7 @@ func checkTopic(r *Report, p map[string]string, brokerAddr, topic string) {
 	addRow(r, Row{"kafka", topic, L7, OK, fmt.Sprintf("Topic visible; leader partitions=%d", leaders), ""})
 }
 
-func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bootstrap, topic, group string, opTimeout time.Duration) {
+func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bootstrap, topic, group string, opTimeout time.Duration, balancer string, kafkaTimeout time.Duration) {
 	if topic == "" {
 		addRow(r, Row{"kafka", "(no topic)", L7, SKIP, "Produce/Consume skipped", ""})
 		return
@@ -731,14 +735,15 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 	if opTimeout <= 0 {
 		opTimeout = 10 * time.Second
 	}
-	leaders := topicLeaders(p, bootstrap, topic)
+	leaders := topicLeaders(p, bootstrap, topic, kafkaTimeout)
 	if len(leaders) == 0 {
 		logf("step kafka.leaders topic=%s err=unavailable", topic)
 	}
+	baseBalancer := selectBalancer(balancer)
 	w := &kafka.Writer{
 		Addr:         kafka.TCP(strings.Split(bootstrap, ",")...),
 		Topic:        topic,
-		Balancer:     &loggingBalancer{base: &kafka.LeastBytes{}, topic: topic, leaders: leaders},
+		Balancer:     &loggingBalancer{base: baseBalancer, topic: topic, leaders: leaders},
 		RequiredAcks: kafka.RequireOne,
 		Async:        false,
 		Transport:    &kafka.Transport{SASL: dialer.SASLMechanism, TLS: dialer.TLS, DialTimeout: opTimeout},
@@ -945,7 +950,7 @@ func (b *loggingBalancer) Balance(msg kafka.Message, partitions ...int) int {
 	return partition
 }
 
-func topicLeaders(p map[string]string, bootstrap, topic string) map[int]kafka.Broker {
+func topicLeaders(p map[string]string, bootstrap, topic string, timeout time.Duration) map[int]kafka.Broker {
 	first := strings.TrimSpace(strings.Split(bootstrap, ",")[0])
 	hostForSNI := firstHost(first)
 	dialer, _, err := dialerFromProps(p, hostForSNI)
@@ -953,7 +958,10 @@ func topicLeaders(p map[string]string, bootstrap, topic string) map[int]kafka.Br
 		logf("step kafka.leaders dialer err=%v", err)
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	start := time.Now()
 	conn, err := dialer.DialContext(ctx, "tcp", first)
@@ -979,6 +987,22 @@ func topicLeaders(p map[string]string, bootstrap, topic string) map[int]kafka.Br
 		}
 	}
 	return leaders
+}
+
+func selectBalancer(name string) kafka.Balancer {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "rr", "roundrobin":
+		return &kafka.RoundRobin{}
+	case "random":
+		return kafka.BalancerFunc(func(_ kafka.Message, partitions ...int) int {
+			if len(partitions) == 0 {
+				return 0
+			}
+			return partitions[rand.Intn(len(partitions))]
+		})
+	default:
+		return &kafka.LeastBytes{}
+	}
 }
 
 // ---------- Schema Registry / REST ----------
@@ -1274,7 +1298,9 @@ func main() {
 	noAI := flag.Bool("no-ai", false, "Skip AI analysis")
 	provider := flag.String("provider", "", "Select AI provider from ai_config.json (e.g., openai, scalytics-connect)")
 	timeout := flag.Duration("timeout", 60*time.Second, "Global timeout for the entire scan")
+	kafkaTimeout := flag.Duration("kafka-timeout", 10*time.Second, "Timeout for Kafka metadata/dial operations")
 	opTimeout := flag.Duration("op-timeout", 10*time.Second, "Timeout for Kafka produce/consume operations")
+	balancer := flag.String("balancer", "least", "Partition balancer for probes: least|rr|random")
 	preset := flag.String("preset", "", "Preset: cc-plain|self-scram")
 	diag := flag.Bool("diag", true, "Run traceroute/MTU diagnostics if tools are available")
 	logPath := flag.String("log", "", "Write detailed scan log to file (default: reports/kshark-<timestamp>.log)")
@@ -1282,7 +1308,7 @@ func main() {
 	flag.Parse()
 
 	if *propsPath == "" {
-		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [-op-timeout 10s] [-log file] [--analyze]")
+		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [-timeout 60s] [-kafka-timeout 10s] [-op-timeout 10s] [-balancer least|rr|random] [-log file] [--analyze]")
 		os.Exit(2)
 	}
 
@@ -1302,8 +1328,8 @@ func main() {
 		absPath, _ := filepath.Abs(*logPath)
 		fmt.Printf("Log file: %s\n", absPath)
 	}
-	logf("scan start props=%s timeout=%s op_timeout=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
-		*propsPath, timeout.String(), opTimeout.String(), *diag, *analyze, *jsonOut, *topic, *group, *preset)
+	logf("scan start props=%s timeout=%s kafka_timeout=%s op_timeout=%s balancer=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
+		*propsPath, timeout.String(), kafkaTimeout.String(), opTimeout.String(), *balancer, *diag, *analyze, *jsonOut, *topic, *group, *preset)
 
 	props, err := loadProperties(*propsPath)
 	if err != nil {
@@ -1417,7 +1443,7 @@ func main() {
 		// Kafka protocol: ApiVersions/Metadata + topic visibility
 		for _, t := range topics {
 			logf("topic metadata check topic=%s broker=%s", t, addr)
-			checkTopic(report, props, addr, t)
+			checkTopic(report, props, addr, t, *kafkaTimeout)
 		}
 
 		// Diagnostics (best-effort)
@@ -1435,7 +1461,7 @@ func main() {
 			goto endScan
 		default:
 			logf("produce/consume start topic=%s group=%s", t, *group)
-			probeProduceConsume(ctx, report, props, bootstrap, t, *group, *opTimeout)
+			probeProduceConsume(ctx, report, props, bootstrap, t, *group, *opTimeout, *balancer, *kafkaTimeout)
 		}
 	}
 

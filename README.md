@@ -109,10 +109,7 @@ EOF
 
 ```bash
 # Use a preset for Confluent Cloud
-./kshark --preset confluent-cloud \
-  -override bootstrap.servers=pkc-xxxxx.us-east-1.aws.confluent.cloud:9092 \
-  -override sasl.username=YOUR_KEY \
-  -override sasl.password=YOUR_SECRET
+./kshark --preset cc-plain -props client.properties
 ```
 
 ---
@@ -190,8 +187,17 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 # Skip confirmation prompt (for automation)
 ./kshark -props client.properties -y
 
-# Adjust timeout
+# Adjust global timeout
 ./kshark -props client.properties -timeout 120s
+
+# Adjust Kafka metadata timeout
+./kshark -props client.properties -kafka-timeout 20s
+
+# Adjust produce/consume timeout
+./kshark -props client.properties -op-timeout 30s
+
+# Select partition balancer for probes
+./kshark -props client.properties -topic my-topic -balancer rr
 
 # Generate HTML report
 ./kshark -props client.properties -topic my-topic
@@ -212,14 +218,13 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 
 ```bash
 # Confluent Cloud
-./kshark --preset confluent-cloud -override bootstrap.servers=YOUR_BROKER:9092 \
-  -override sasl.username=KEY -override sasl.password=SECRET
+./kshark --preset cc-plain -props client.properties
 
 # AWS MSK with IAM
-./kshark --preset aws-msk -override bootstrap.servers=YOUR_MSK_ENDPOINT:9098
+./kshark --preset self-scram -props client.properties
 
 # Local development (no security)
-./kshark --preset plaintext -override bootstrap.servers=localhost:9092
+./kshark --preset plaintext -props client.properties
 ```
 
 ### Command-Line Flags
@@ -227,12 +232,19 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 | Flag | Description | Default | Example |
 |------|-------------|---------|---------|
 | `-props` | Path to properties file | (required) | `-props config.properties` |
-| `-topic` | Topic name to test | (optional) | `-topic orders` |
-| `--preset` | Configuration preset | (none) | `--preset confluent-cloud` |
-| `-override` | Override property value | (none) | `-override sasl.username=key` |
+| `-topic` | Comma-separated topics to test | (optional) | `-topic orders,payments` |
+| `-group` | Consumer group for probe | (ephemeral) | `-group kshark-probe` |
+| `--preset` | Configuration preset | (none) | `--preset cc-plain` |
+| `-timeout` | Global timeout for entire scan | 60s | `-timeout 120s` |
+| `-kafka-timeout` | Kafka metadata/dial timeout | 10s | `-kafka-timeout 20s` |
+| `-op-timeout` | Produce/consume timeout | 10s | `-op-timeout 30s` |
+| `-balancer` | Probe partition balancer (`least|rr|random`) | `least` | `-balancer rr` |
+| `-diag` | Enable traceroute/MTU diagnostics | true | `-diag=false` |
+| `-log` | Write detailed scan log to file | auto | `-log /tmp/kshark.log` |
 | `--analyze` | Enable AI analysis | false | `--analyze` |
+| `-no-ai` | Skip AI analysis even if enabled | false | `-no-ai` |
+| `-provider` | AI provider name from `ai_config.json` | (default) | `-provider openai` |
 | `-json` | Export to JSON file | (none) | `-json output.json` |
-| `-timeout` | Connection timeout | 60s | `-timeout 120s` |
 | `-y` | Skip confirmation prompt | false | `-y` |
 | `--version` | Show version info | - | `--version` |
 

@@ -688,12 +688,19 @@ Premium features require a valid `license.key` file.
 | Flag | Description | Default | Example |
 |------|-------------|---------|---------|
 | `-topic` | Topic to test | (none) | `-topic orders` |
-| `-timeout` | Connection timeout | 60s | `-timeout 120s` |
+| `-group` | Consumer group for probe | (ephemeral) | `-group kshark-probe` |
+| `-timeout` | Global timeout for entire scan | 60s | `-timeout 120s` |
+| `-kafka-timeout` | Kafka metadata/dial timeout | 10s | `-kafka-timeout 20s` |
+| `-op-timeout` | Produce/consume timeout | 10s | `-op-timeout 30s` |
+| `-balancer` | Probe partition balancer (`least|rr|random`) | `least` | `-balancer rr` |
+| `-diag` | Enable traceroute/MTU diagnostics | true | `-diag=false` |
+| `-log` | Write detailed scan log to file | auto | `-log /tmp/kshark.log` |
 | `-y` | Skip confirmation | false | `-y` |
 | `--analyze` | AI analysis | false | `--analyze` |
+| `-no-ai` | Skip AI analysis even if enabled | false | `-no-ai` |
+| `-provider` | AI provider name from `ai_config.json` | (default) | `-provider openai` |
 | `-json` | JSON output file | (none) | `-json report.json` |
-| `--preset` | Config preset | (none) | `--preset confluent-cloud` |
-| `-override` | Override property | (none) | `-override sasl.username=key` |
+| `--preset` | Config preset | (none) | `--preset cc-plain` |
 | `--version` | Show version | - | `--version` |
 
 ---
@@ -732,10 +739,7 @@ Premium features require a valid `license.key` file.
 
 **Using preset:**
 ```bash
-./kshark --preset confluent-cloud \
-  -override bootstrap.servers=pkc-xxxxx.aws.confluent.cloud:9092 \
-  -override sasl.username=API_KEY \
-  -override sasl.password=API_SECRET
+./kshark --preset cc-plain -props client.properties
 ```
 
 ---
