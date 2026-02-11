@@ -686,6 +686,48 @@ func dialerFromProps(p map[string]string, hostForSNI string) (*kafka.Dialer, str
 	return d, tlsDesc, nil
 }
 
+// transportFromProps builds a kafka.Transport with TLS and SASL configured
+// directly. Unlike dialerFromProps (which returns a kafka.Dialer suitable for
+// kafka.Conn), this creates a Transport where TLS ServerName is auto-derived
+// per broker, so connections to leader brokers use the correct SNI.
+func transportFromProps(p map[string]string, timeout time.Duration) (*kafka.Transport, error) {
+	// Empty ServerName — the Transport auto-fills it from the target broker
+	// address, ensuring correct SNI for each broker on Confluent Cloud.
+	tlsConf, _, err := tlsConfigFromProps(p, "")
+	if err != nil {
+		return nil, fmt.Errorf("tls config: %w", err)
+	}
+
+	kind, kv, err := saslFromProps(p)
+	if err != nil {
+		return nil, fmt.Errorf("sasl config: %w", err)
+	}
+
+	var mech sasl.Mechanism
+	switch kind {
+	case AuthPLAIN:
+		mech = plain.Mechanism{Username: kv["username"], Password: kv["password"]}
+	case AuthSCRAM256:
+		m, e := scram.Mechanism(scram.SHA256, kv["username"], kv["password"])
+		if e != nil {
+			return nil, e
+		}
+		mech = m
+	case AuthSCRAM512:
+		m, e := scram.Mechanism(scram.SHA512, kv["username"], kv["password"])
+		if e != nil {
+			return nil, e
+		}
+		mech = m
+	}
+
+	return &kafka.Transport{
+		TLS:         tlsConf,
+		SASL:        mech,
+		DialTimeout: timeout,
+	}, nil
+}
+
 // ---------- Kafka helpers & policy hints ----------
 
 func kafkaConn(r *Report, p map[string]string, brokerAddr string, timeout time.Duration) (*kafka.Conn, error) {
@@ -774,13 +816,15 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		logf("step kafka.leaders topic=%s err=unavailable", topic)
 	}
 	baseBalancer := selectBalancer(balancer)
-	// Create shared Transport that uses the dialer for all connections
-	// This ensures proper metadata refresh and broker discovery for Confluent Cloud
-	transport := &kafka.Transport{
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, address)
-		},
-		DialTimeout: produceTimeout,
+	// Build Transport with TLS and SASL configured directly.
+	// IMPORTANT: Do NOT use dialer.DialContext as Transport.Dial — it returns
+	// *kafka.Conn whose Read/Write wrap data in Kafka Fetch/Produce frames,
+	// corrupting the Transport's internal protocol communication.
+	// Instead, let the Transport handle TLS (with per-broker SNI) and SASL itself.
+	transport, err := transportFromProps(p, produceTimeout)
+	if err != nil {
+		addRow(r, Row{"kafka", topic, L7, FAIL, fmt.Sprintf("transport: %v", err), "Check tls/sasl settings."})
+		return
 	}
 	w := &kafka.Writer{
 		Addr:         kafka.TCP(strings.Split(bootstrap, ",")...),
