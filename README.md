@@ -11,7 +11,7 @@
 
 ---
 
-## 🤖 Built for AI Agents
+## Built for AI Agents and Teams of Collaborationg Experts
 
 **Tools are the difference between AI assistants and AI operators.**
 
