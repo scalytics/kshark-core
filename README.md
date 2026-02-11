@@ -196,6 +196,12 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 # Adjust produce/consume timeout
 ./kshark -props client.properties -op-timeout 30s
 
+# Adjust produce/consume timeouts independently
+./kshark -props client.properties -produce-timeout 20s -consume-timeout 45s
+
+# Control probe read start offset
+./kshark -props client.properties -start-offset latest
+
 # Select partition balancer for probes
 ./kshark -props client.properties -topic my-topic -balancer rr
 
@@ -238,6 +244,9 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 | `-timeout` | Global timeout for entire scan | 60s | `-timeout 120s` |
 | `-kafka-timeout` | Kafka metadata/dial timeout | 10s | `-kafka-timeout 20s` |
 | `-op-timeout` | Produce/consume timeout | 10s | `-op-timeout 30s` |
+| `-produce-timeout` | Produce timeout (overrides `-op-timeout`) | (none) | `-produce-timeout 20s` |
+| `-consume-timeout` | Consume timeout (overrides `-op-timeout`) | (none) | `-consume-timeout 45s` |
+| `-start-offset` | Probe read start offset (`earliest|latest`) | `earliest` | `-start-offset latest` |
 | `-balancer` | Probe partition balancer (`least|rr|random`) | `least` | `-balancer rr` |
 | `-diag` | Enable traceroute/MTU diagnostics | true | `-diag=false` |
 | `-log` | Write detailed scan log to file | auto | `-log /tmp/kshark.log` |

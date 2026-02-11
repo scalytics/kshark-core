@@ -18,9 +18,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/md5"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -149,14 +152,8 @@ func buildAnalysisPrompt(report *Report) (string, string, error) {
 }
 
 // writeAnalysisPromptMD saves the analysis prompt as a Markdown file so the user
-// can paste it into any AI chatbot (ChatGPT, Claude, Gemini, etc.) when no API key
-// is configured.
-func writeAnalysisPromptMD(report *Report, reportDir string) (string, error) {
-	systemPrompt, userPrompt, err := buildAnalysisPrompt(report)
-	if err != nil {
-		return "", err
-	}
-
+// can paste it into any AI chatbot (ChatGPT, Claude, Gemini, etc.).
+func writeAnalysisPromptMD(systemPrompt, userPrompt, reportDir string) (string, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
@@ -175,7 +172,7 @@ func writeAnalysisPromptMD(report *Report, reportDir string) (string, error) {
 
 	var buf bytes.Buffer
 	buf.WriteString("# kshark AI Analysis Prompt\n\n")
-	buf.WriteString("This file was generated because no AI API key was configured.\n")
+	buf.WriteString("This file captures the exact system prompt and report data used for AI analysis.\n")
 	buf.WriteString("You can copy the contents below and paste them into **any AI chatbot**\n")
 	buf.WriteString("(ChatGPT, Claude, Gemini, Copilot, or any OpenAI-compatible endpoint)\n")
 	buf.WriteString("to get an automated root-cause analysis of your Kafka connectivity report.\n\n")
@@ -198,12 +195,7 @@ func writeAnalysisPromptMD(report *Report, reportDir string) (string, error) {
 	return mdPath, nil
 }
 
-func (c *AIClient) AnalyzeReport(ctx context.Context, report *Report) (*AIAnalysisResponse, error) {
-	systemPrompt, userPrompt, err := buildAnalysisPrompt(report)
-	if err != nil {
-		return nil, err
-	}
-
+func (c *AIClient) AnalyzeReport(ctx context.Context, systemPrompt, userPrompt string) (*AIAnalysisResponse, error) {
 	reqBody := APIRequest{
 		Model: c.config.Model,
 		Messages: []Message{
@@ -314,6 +306,9 @@ type Report struct {
 	StartedAt  time.Time             `json:"started_at"`
 	FinishedAt time.Time             `json:"finished_at"`
 	ConfigEcho map[string]string     `json:"config_echo,omitempty"`
+	Analysis   *AnalysisMeta         `json:"analysis,omitempty"`
+	Run        *RunMeta              `json:"run,omitempty"`
+	Artifacts  *ArtifactsMeta        `json:"artifacts,omitempty"`
 	HasFailed  bool                  `json:"-"`
 }
 
@@ -322,6 +317,42 @@ type CheckStats struct {
 	WARN int `json:"warn"`
 	FAIL int `json:"fail"`
 	SKIP int `json:"skip"`
+}
+
+type AnalysisMeta struct {
+	PromptFile     string `json:"prompt_file,omitempty"`
+	PromptSHA256   string `json:"prompt_sha256,omitempty"`
+	PromptContent  string `json:"prompt_content,omitempty"`
+	ResponseFile   string `json:"response_file,omitempty"`
+	ResponseSHA256 string `json:"response_sha256,omitempty"`
+	ResponseContent string `json:"response_content,omitempty"`
+	ResponseStatus string `json:"response_status,omitempty"`
+	ResponseError  string `json:"response_error,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	Model          string `json:"model,omitempty"`
+}
+
+type RunMeta struct {
+	Args   []string             `json:"args,omitempty"`
+	Params map[string]ParamMeta `json:"params,omitempty"`
+}
+
+type ParamMeta struct {
+	Value     string `json:"value,omitempty"`
+	Default   string `json:"default,omitempty"`
+	IsDefault bool   `json:"is_default,omitempty"`
+	Provided  bool   `json:"provided,omitempty"`
+}
+
+type ArtifactsMeta struct {
+	LogFile       string `json:"log_file,omitempty"`
+	LogSHA256     string `json:"log_sha256,omitempty"`
+	LogContent    string `json:"log_content,omitempty"`
+	PromptFile    string `json:"prompt_file,omitempty"`
+	PromptSHA256  string `json:"prompt_sha256,omitempty"`
+	PromptContent string `json:"prompt_content,omitempty"`
+	ReportMD5File string `json:"report_md5_file,omitempty"`
+	ReportMD5     string `json:"report_md5,omitempty"`
 }
 
 // ---------- Utilities ----------
@@ -721,7 +752,7 @@ func checkTopic(r *Report, p map[string]string, brokerAddr, topic string, timeou
 	addRow(r, Row{"kafka", topic, L7, OK, fmt.Sprintf("Topic visible; leader partitions=%d", leaders), ""})
 }
 
-func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bootstrap, topic, group string, opTimeout time.Duration, balancer string, kafkaTimeout time.Duration) {
+func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bootstrap, topic, group string, produceTimeout, consumeTimeout time.Duration, balancer string, kafkaTimeout time.Duration, startOffset int64) {
 	if topic == "" {
 		addRow(r, Row{"kafka", "(no topic)", L7, SKIP, "Produce/Consume skipped", ""})
 		return
@@ -732,8 +763,11 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		addRow(r, Row{"kafka", topic, L7, FAIL, fmt.Sprintf("dialer: %v", err), "Check tls/sasl settings."})
 		return
 	}
-	if opTimeout <= 0 {
-		opTimeout = 10 * time.Second
+	if produceTimeout <= 0 {
+		produceTimeout = 10 * time.Second
+	}
+	if consumeTimeout <= 0 {
+		consumeTimeout = 10 * time.Second
 	}
 	leaders := topicLeaders(p, bootstrap, topic, kafkaTimeout)
 	if len(leaders) == 0 {
@@ -746,7 +780,7 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		Balancer:     &loggingBalancer{base: baseBalancer, topic: topic, leaders: leaders},
 		RequiredAcks: kafka.RequireOne,
 		Async:        false,
-		Transport:    &kafka.Transport{SASL: dialer.SASLMechanism, TLS: dialer.TLS, DialTimeout: opTimeout},
+		Transport:    &kafka.Transport{SASL: dialer.SASLMechanism, TLS: dialer.TLS, DialTimeout: produceTimeout},
 	}
 	defer w.Close()
 
@@ -759,7 +793,7 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 	}
 
 	writeStart := time.Now()
-	writeCtx, writeCancel := context.WithTimeout(ctx, opTimeout)
+	writeCtx, writeCancel := context.WithTimeout(ctx, produceTimeout)
 	defer writeCancel()
 	if err := w.WriteMessages(writeCtx, msg); err != nil {
 		logf("step kafka.produce topic=%s dur=%s err=%v", topic, time.Since(writeStart).Truncate(time.Millisecond), err)
@@ -773,16 +807,17 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		group = fmt.Sprintf("kwire-%d", time.Now().UnixNano())
 	}
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: strings.Split(bootstrap, ","),
-		Topic:   topic,
-		GroupID: group,
-		MaxWait: 3 * time.Second,
-		Dialer:  dialer,
+		Brokers:     strings.Split(bootstrap, ","),
+		Topic:       topic,
+		GroupID:     group,
+		StartOffset: startOffset,
+		MaxWait:     3 * time.Second,
+		Dialer:      dialer,
 	})
 	defer reader.Close()
 
 	readStart := time.Now()
-	readCtx, readCancel := context.WithTimeout(ctx, opTimeout)
+	readCtx, readCancel := context.WithTimeout(ctx, consumeTimeout)
 	defer readCancel()
 	rec, err := reader.ReadMessage(readCtx)
 	if err != nil {
@@ -929,6 +964,86 @@ func initScanLog(path string) (*os.File, error) {
 	return f, nil
 }
 
+func paramMeta(value, def string, provided bool) ParamMeta {
+	return ParamMeta{
+		Value:     value,
+		Default:   def,
+		IsDefault: !provided,
+		Provided:  provided,
+	}
+}
+
+func fileSHA256(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func fileMD5(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := md5.Sum(b)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func readFileContent(path string) (string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func writeAnalysisResponseJSON(analysis *AIAnalysisResponse, reportDir string) (string, error) {
+	if analysis == nil {
+		return "", errors.New("analysis is nil")
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+	hostname = strings.Split(hostname, ".")[0]
+	timestamp := time.Now().Format("20060102_150405")
+	if reportDir == "" {
+		reportDir = "reports"
+	}
+	if err := os.MkdirAll(reportDir, 0755); err != nil {
+		return "", fmt.Errorf("could not create reports directory: %w", err)
+	}
+	path := filepath.Join(reportDir, fmt.Sprintf("analysis_response_%s_%s.json", hostname, timestamp))
+	data, err := json.MarshalIndent(analysis, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("could not marshal analysis response: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", fmt.Errorf("could not write analysis response file: %w", err)
+	}
+	return path, nil
+}
+
+func writeReportMD5(path string) (string, string, error) {
+	if path == "" {
+		return "", "", errors.New("empty report path")
+	}
+	hash, err := fileMD5(path)
+	if err != nil {
+		return "", "", err
+	}
+	timestamp := time.Now().Format("20060102_150405")
+	dir := filepath.Dir(path)
+	md5Path := filepath.Join(dir, fmt.Sprintf("report_md5_%s.txt", timestamp))
+	content := fmt.Sprintf("%s\t%s\t%s\n", timestamp, path, hash)
+	if err := os.WriteFile(md5Path, []byte(content), 0644); err != nil {
+		return "", "", err
+	}
+	return md5Path, hash, nil
+}
+
 type loggingBalancer struct {
 	base    kafka.Balancer
 	topic   string
@@ -1002,6 +1117,17 @@ func selectBalancer(name string) kafka.Balancer {
 		})
 	default:
 		return &kafka.LeastBytes{}
+	}
+}
+
+func parseStartOffset(s string) (int64, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "earliest", "first":
+		return kafka.FirstOffset, nil
+	case "latest", "last":
+		return kafka.LastOffset, nil
+	default:
+		return kafka.FirstOffset, fmt.Errorf("invalid start-offset: %s", s)
 	}
 }
 
@@ -1300,15 +1426,28 @@ func main() {
 	timeout := flag.Duration("timeout", 60*time.Second, "Global timeout for the entire scan")
 	kafkaTimeout := flag.Duration("kafka-timeout", 10*time.Second, "Timeout for Kafka metadata/dial operations")
 	opTimeout := flag.Duration("op-timeout", 10*time.Second, "Timeout for Kafka produce/consume operations")
+	produceTimeout := flag.Duration("produce-timeout", 0, "Timeout for Kafka produce operations (overrides -op-timeout)")
+	consumeTimeout := flag.Duration("consume-timeout", 0, "Timeout for Kafka consume operations (overrides -op-timeout)")
 	balancer := flag.String("balancer", "least", "Partition balancer for probes: least|rr|random")
+	startOffset := flag.String("start-offset", "earliest", "Probe read start offset: earliest|latest")
 	preset := flag.String("preset", "", "Preset: cc-plain|self-scram")
 	diag := flag.Bool("diag", true, "Run traceroute/MTU diagnostics if tools are available")
 	logPath := flag.String("log", "", "Write detailed scan log to file (default: reports/kshark-<timestamp>.log)")
 	yes := flag.Bool("y", false, "Skip interactive confirmation and proceed with the scan")
+	showVersion := flag.Bool("version", false, "Show version information and exit")
 	flag.Parse()
+	providedFlags := map[string]bool{}
+	flag.CommandLine.Visit(func(f *flag.Flag) {
+		providedFlags[f.Name] = true
+	})
+
+	if *showVersion {
+		fmt.Printf("kshark version %s (commit %s, built %s)\n", version, commit, date)
+		return
+	}
 
 	if *propsPath == "" {
-		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [-timeout 60s] [-kafka-timeout 10s] [-op-timeout 10s] [-balancer least|rr|random] [-log file] [--analyze]")
+		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [-timeout 60s] [-kafka-timeout 10s] [-op-timeout 10s] [-produce-timeout 10s] [-consume-timeout 10s] [-start-offset earliest|latest] [-balancer least|rr|random] [-log file] [--analyze] [--version]")
 		os.Exit(2)
 	}
 
@@ -1328,8 +1467,8 @@ func main() {
 		absPath, _ := filepath.Abs(*logPath)
 		fmt.Printf("Log file: %s\n", absPath)
 	}
-	logf("scan start props=%s timeout=%s kafka_timeout=%s op_timeout=%s balancer=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
-		*propsPath, timeout.String(), kafkaTimeout.String(), opTimeout.String(), *balancer, *diag, *analyze, *jsonOut, *topic, *group, *preset)
+	logf("scan start props=%s timeout=%s kafka_timeout=%s op_timeout=%s produce_timeout=%s consume_timeout=%s start_offset=%s balancer=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
+		*propsPath, timeout.String(), kafkaTimeout.String(), opTimeout.String(), produceTimeout.String(), consumeTimeout.String(), *startOffset, *balancer, *diag, *analyze, *jsonOut, *topic, *group, *preset)
 
 	props, err := loadProperties(*propsPath)
 	if err != nil {
@@ -1350,6 +1489,45 @@ func main() {
 
 	topics := parseTopics(*topic)
 	logf("topics=%v", topics)
+
+	produceTimeoutVal := *produceTimeout
+	consumeTimeoutVal := *consumeTimeout
+	if produceTimeoutVal <= 0 {
+		produceTimeoutVal = *opTimeout
+	}
+	if consumeTimeoutVal <= 0 {
+		consumeTimeoutVal = *opTimeout
+	}
+	startOffsetVal, startOffsetErr := parseStartOffset(*startOffset)
+	if startOffsetErr != nil {
+		fmt.Fprintf(os.Stderr, "Invalid -start-offset value, defaulting to earliest: %v\n", startOffsetErr)
+		logf("start-offset invalid value=%s err=%v", *startOffset, startOffsetErr)
+	}
+
+	report.Run = &RunMeta{
+		Args: os.Args,
+		Params: map[string]ParamMeta{
+			"props":            paramMeta(*propsPath, "", providedFlags["props"]),
+			"topic":            paramMeta(*topic, "", providedFlags["topic"]),
+			"group":            paramMeta(*group, "", providedFlags["group"]),
+			"json":             paramMeta(*jsonOut, "", providedFlags["json"]),
+			"analyze":          paramMeta(strconv.FormatBool(*analyze), "false", providedFlags["analyze"]),
+			"no-ai":            paramMeta(strconv.FormatBool(*noAI), "false", providedFlags["no-ai"]),
+			"provider":         paramMeta(*provider, "", providedFlags["provider"]),
+			"timeout":          paramMeta(timeout.String(), "1m0s", providedFlags["timeout"]),
+			"kafka-timeout":    paramMeta(kafkaTimeout.String(), "10s", providedFlags["kafka-timeout"]),
+			"op-timeout":       paramMeta(opTimeout.String(), "10s", providedFlags["op-timeout"]),
+			"produce-timeout":  paramMeta(produceTimeoutVal.String(), "inherit op-timeout", providedFlags["produce-timeout"]),
+			"consume-timeout":  paramMeta(consumeTimeoutVal.String(), "inherit op-timeout", providedFlags["consume-timeout"]),
+			"start-offset":     paramMeta(*startOffset, "earliest", providedFlags["start-offset"]),
+			"balancer":         paramMeta(*balancer, "least", providedFlags["balancer"]),
+			"preset":           paramMeta(*preset, "", providedFlags["preset"]),
+			"diag":             paramMeta(strconv.FormatBool(*diag), "true", providedFlags["diag"]),
+			"log":              paramMeta(*logPath, "", providedFlags["log"]),
+			"y":                paramMeta(strconv.FormatBool(*yes), "false", providedFlags["y"]),
+			"version":          paramMeta(strconv.FormatBool(*showVersion), "false", providedFlags["version"]),
+		},
+	}
 
 	// Peek at AI config for scan plan display
 	var aiProviderName, aiModel string
@@ -1461,7 +1639,7 @@ func main() {
 			goto endScan
 		default:
 			logf("produce/consume start topic=%s group=%s", t, *group)
-			probeProduceConsume(ctx, report, props, bootstrap, t, *group, *opTimeout, *balancer, *kafkaTimeout)
+			probeProduceConsume(ctx, report, props, bootstrap, t, *group, produceTimeoutVal, consumeTimeoutVal, *balancer, *kafkaTimeout, startOffsetVal)
 		}
 	}
 
@@ -1519,86 +1697,146 @@ endScan:
 	// Determine the reports directory (same location as JSON report if specified)
 	reportsDir := "reports"
 	if *jsonOut != "" {
+		reportsDir = filepath.Dir(*jsonOut)
+	}
+
+	analysisMeta := &AnalysisMeta{}
+	systemPrompt, userPrompt, err := buildAnalysisPrompt(report)
+	if err != nil {
+		analysisMeta.ResponseStatus = "error"
+		analysisMeta.ResponseError = fmt.Sprintf("build prompt: %v", err)
+	} else {
+		mdPath, err := writeAnalysisPromptMD(systemPrompt, userPrompt, reportsDir)
+		if err != nil {
+			analysisMeta.ResponseStatus = "error"
+			analysisMeta.ResponseError = fmt.Sprintf("write prompt: %v", err)
+		} else {
+			analysisMeta.PromptFile = mdPath
+			if h, err := fileSHA256(mdPath); err == nil {
+				analysisMeta.PromptSHA256 = h
+			}
+			if c, err := readFileContent(mdPath); err == nil {
+				analysisMeta.PromptContent = c
+			}
+			absPath, _ := filepath.Abs(mdPath)
+			fmt.Printf("\nAnalysis prompt saved to: %s\n", absPath)
+			logf("analysis prompt path=%s sha256=%s", mdPath, analysisMeta.PromptSHA256)
+		}
+
+		if *analyze && !*noAI {
+			aiConfig, err := loadAIConfig()
+			needsFallback := false
+			var fallbackReason string
+
+			if err != nil {
+				needsFallback = true
+				fallbackReason = fmt.Sprintf("AI config not available: %v", err)
+			}
+
+			var providerName string
+			var providerConfig AIProviderConfig
+			if !needsFallback {
+				providerName = aiConfig.DefaultProvider
+				if *provider != "" {
+					providerName = *provider
+				}
+
+				var ok bool
+				providerConfig, ok = aiConfig.Providers[providerName]
+				if !ok {
+					needsFallback = true
+					fallbackReason = fmt.Sprintf("AI provider '%s' not found in ai_config.json", providerName)
+				} else if strings.HasPrefix(providerConfig.APIKey, "YOUR_") || providerConfig.APIKey == "" {
+					needsFallback = true
+					fallbackReason = fmt.Sprintf("API key for provider '%s' is not configured", providerName)
+				}
+			}
+
+			if needsFallback {
+				analysisMeta.ResponseStatus = "skipped"
+				analysisMeta.ResponseError = fallbackReason
+				fmt.Fprintf(os.Stderr, "\nNote: %s\n", fallbackReason)
+			} else {
+				analysisMeta.Provider = providerName
+				analysisMeta.Model = providerConfig.Model
+				aiClient := NewAIClient(&providerConfig)
+				fmt.Printf("\nSubmitting report for AI analysis using provider '%s'...\n", providerName)
+				analysis, err := aiClient.AnalyzeReport(ctx, systemPrompt, userPrompt)
+				if err != nil {
+					analysisMeta.ResponseStatus = "error"
+					analysisMeta.ResponseError = err.Error()
+					fmt.Fprintf(os.Stderr, "Error during AI analysis: %v\n", err)
+				} else {
+					analysisMeta.ResponseStatus = "ok"
+					if respPath, err := writeAnalysisResponseJSON(analysis, reportsDir); err == nil {
+						analysisMeta.ResponseFile = respPath
+						if h, err := fileSHA256(respPath); err == nil {
+							analysisMeta.ResponseSHA256 = h
+						}
+						if c, err := readFileContent(respPath); err == nil {
+							analysisMeta.ResponseContent = c
+						}
+						logf("analysis response path=%s sha256=%s", respPath, analysisMeta.ResponseSHA256)
+					} else {
+						analysisMeta.ResponseError = fmt.Sprintf("write response: %v", err)
+					}
+
+					fmt.Println("\n--- AI Analysis ---")
+					printIllustrativeAnalysis(analysis)
+					fmt.Println("-------------------")
+
+					reportPath, err := writeHTMLReport(report, analysis)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "Error writing HTML report: %v\n", err)
+					} else {
+						absPath, _ := filepath.Abs(reportPath)
+						fmt.Printf("\nAI analysis report written to %s\n", absPath)
+					}
+				}
+			}
+		} else {
+			analysisMeta.ResponseStatus = "skipped"
+			analysisMeta.ResponseError = "AI analysis disabled"
+		}
+	}
+	if analysisMeta.PromptFile != "" || analysisMeta.ResponseStatus != "" {
+		report.Analysis = analysisMeta
+	}
+
+	if report.Artifacts == nil {
+		report.Artifacts = &ArtifactsMeta{}
+	}
+	if *logPath != "" {
+		if logFile != nil {
+			_ = logFile.Sync()
+		}
+		report.Artifacts.LogFile = *logPath
+		if h, err := fileSHA256(*logPath); err == nil {
+			report.Artifacts.LogSHA256 = h
+		}
+		if c, err := readFileContent(*logPath); err == nil {
+			report.Artifacts.LogContent = c
+		}
+	}
+	if analysisMeta.PromptFile != "" {
+		report.Artifacts.PromptFile = analysisMeta.PromptFile
+		report.Artifacts.PromptSHA256 = analysisMeta.PromptSHA256
+		report.Artifacts.PromptContent = analysisMeta.PromptContent
+	}
+
+	if *jsonOut != "" {
 		actualPath, err := writeJSON(*jsonOut, report)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing JSON report: %v\n", err)
 			os.Exit(1)
 		}
-		reportsDir = filepath.Dir(actualPath)
 		absPath, _ := filepath.Abs(actualPath)
 		fmt.Printf("JSON report written to %s\n", absPath)
-	}
-
-	if *analyze && !*noAI {
-		aiConfig, err := loadAIConfig()
-		needsFallback := false
-		var fallbackReason string
-
-		if err != nil {
-			needsFallback = true
-			fallbackReason = fmt.Sprintf("AI config not available: %v", err)
-		}
-
-		var providerName string
-		var providerConfig AIProviderConfig
-		if !needsFallback {
-			providerName = aiConfig.DefaultProvider
-			if *provider != "" {
-				providerName = *provider
-			}
-
-			var ok bool
-			providerConfig, ok = aiConfig.Providers[providerName]
-			if !ok {
-				needsFallback = true
-				fallbackReason = fmt.Sprintf("AI provider '%s' not found in ai_config.json", providerName)
-			} else if strings.HasPrefix(providerConfig.APIKey, "YOUR_") || providerConfig.APIKey == "" {
-				needsFallback = true
-				fallbackReason = fmt.Sprintf("API key for provider '%s' is not configured", providerName)
-			}
-		}
-
-		if needsFallback {
-			fmt.Fprintf(os.Stderr, "\nNote: %s\n", fallbackReason)
-			fmt.Println("Generating analysis prompt as Markdown file instead...")
-			mdPath, err := writeAnalysisPromptMD(report, reportsDir)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing analysis prompt: %v\n", err)
-			} else {
-				absPath, _ := filepath.Abs(mdPath)
-				fmt.Printf("\nAnalysis prompt saved to: %s\n", absPath)
-				fmt.Println("You can paste the contents of this file into any AI chatbot")
-				fmt.Println("(ChatGPT, Claude, Gemini, etc.) to get a root-cause analysis.")
-			}
+		if md5Path, md5Sum, err := writeReportMD5(actualPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing report md5: %v\n", err)
 		} else {
-			aiClient := NewAIClient(&providerConfig)
-			fmt.Printf("\nSubmitting report for AI analysis using provider '%s'...\n", providerName)
-			analysis, err := aiClient.AnalyzeReport(ctx, report)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error during AI analysis: %v\n", err)
-				fmt.Println("Falling back to saving analysis prompt as Markdown file...")
-				mdPath, err := writeAnalysisPromptMD(report, reportsDir)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing analysis prompt: %v\n", err)
-				} else {
-					absPath, _ := filepath.Abs(mdPath)
-					fmt.Printf("\nAnalysis prompt saved to: %s\n", absPath)
-					fmt.Println("You can paste the contents of this file into any AI chatbot")
-					fmt.Println("(ChatGPT, Claude, Gemini, etc.) to get a root-cause analysis.")
-				}
-			} else {
-				fmt.Println("\n--- AI Analysis ---")
-				printIllustrativeAnalysis(analysis)
-				fmt.Println("-------------------")
-
-				reportPath, err := writeHTMLReport(report, analysis)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing HTML report: %v\n", err)
-				} else {
-					absPath, _ := filepath.Abs(reportPath)
-					fmt.Printf("\nAI analysis report written to %s\n", absPath)
-				}
-			}
+			fmt.Printf("JSON report md5 saved to %s\n", md5Path)
+			logf("report md5 path=%s md5=%s", md5Path, md5Sum)
 		}
 	}
 
