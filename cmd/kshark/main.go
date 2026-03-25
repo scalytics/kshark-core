@@ -1543,23 +1543,24 @@ func runConnectorProbe(ctx context.Context, r *Report, connectURL, connectorName
 	case connectURL != "" && connectorName != "":
 		client, clientErr := connectapi.NewConnectClient(connectURL, auth)
 		if clientErr != nil {
-			addRow(r, Row{"connect-api", connectURL, L4, FAIL, fmt.Sprintf("Connect client error: %v", clientErr), ""})
 			if connectorConfigPath != "" {
+				addRow(r, Row{"connect-api", connectURL, L4, WARN, fmt.Sprintf("Connect client error (falling back to local config): %v", clientErr), ""})
 				logf("Connect API client error, falling back to local config file")
 				cfg, name, err = connectapi.LoadConnectorConfigFile(connectorConfigPath)
 			} else {
+				addRow(r, Row{"connect-api", connectURL, L4, FAIL, fmt.Sprintf("Connect client error: %v", clientErr), ""})
 				return
 			}
 		} else {
 			cfg, err = client.GetConnectorConfig(ctx, connectorName)
 			name = connectorName
 			if err != nil {
-				addRow(r, Row{"connect-api", connectURL, HTTP, FAIL, fmt.Sprintf("Connect API: %v", err), ""})
 				if connectorConfigPath != "" {
+					addRow(r, Row{"connect-api", connectURL, HTTP, WARN, fmt.Sprintf("Connect API failed (falling back to local config): %v", err), ""})
 					logf("Connect API failed, falling back to local config: %s", connectorConfigPath)
-					fmt.Fprintf(os.Stderr, "WARN: Connect API failed (%v), falling back to local config: %s\n", err, connectorConfigPath)
 					cfg, name, err = connectapi.LoadConnectorConfigFile(connectorConfigPath)
 				} else {
+					addRow(r, Row{"connect-api", connectURL, HTTP, FAIL, fmt.Sprintf("Connect API: %v", err), ""})
 					return
 				}
 			}
