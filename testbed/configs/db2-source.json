@@ -1,0 +1,14 @@
+{
+  "name": "db2-source-test",
+  "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+  "connection.url": "jdbc:db2://db2:50000/TESTDB",
+  "connection.user": "db2inst1",
+  "connection.password": "db2pass",
+  "table.whitelist": "ORDERS",
+  "mode": "incrementing",
+  "incrementing.column.name": "ID",
+  "topic.prefix": "db2-",
+  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

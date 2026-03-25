@@ -1,0 +1,10 @@
+{
+  "name": "mongo-sink-test",
+  "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+  "connection.uri": "mongodb://testuser:testpass@mongodb:27017/testdb?authSource=admin",
+  "database": "testdb",
+  "collection": "events",
+  "topics": "test-topic",
+  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "value.converter": "org.apache.kafka.connect.storage.StringConverter"
+}

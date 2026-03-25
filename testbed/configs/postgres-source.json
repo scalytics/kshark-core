@@ -1,0 +1,14 @@
+{
+  "name": "postgres-source-test",
+  "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+  "connection.url": "jdbc:postgresql://postgres:5432/testdb",
+  "connection.user": "pguser",
+  "connection.password": "pgpass",
+  "table.whitelist": "customers",
+  "mode": "incrementing",
+  "incrementing.column.name": "id",
+  "topic.prefix": "pg-",
+  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

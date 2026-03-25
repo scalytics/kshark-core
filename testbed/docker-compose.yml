@@ -1,0 +1,225 @@
+# =============================================================================
+# kshark Integration Testbed - Docker Compose
+# =============================================================================
+#
+# End-to-end integration testing for kshark connector probes (SPEC-002).
+#
+# Usage:
+#   docker compose up -d
+#   docker compose exec kshark /run-tests.sh
+#   docker compose down -v
+#
+# Skip DB2 (Apple Silicon / faster iteration):
+#   docker compose up -d --scale db2=0
+#
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Kafka (KRaft mode, single node)
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:${CP_VERSION:-7.7.1}
+    hostname: kafka
+    container_name: testbed-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft configuration (no ZooKeeper)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server kafka:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    networks:
+      - testbed-net
+
+  # ---------------------------------------------------------------------------
+  # Kafka Connect (with MongoDB + JDBC connector plugins)
+  # ---------------------------------------------------------------------------
+  connect:
+    image: confluentinc/cp-kafka-connect:${CP_VERSION:-7.7.1}
+    hostname: connect
+    container_name: testbed-connect
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_REST_PORT: 8083
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_GROUP_ID: testbed-connect-group
+      CONNECT_CONFIG_STORAGE_TOPIC: _connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: _connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: _connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.storage.StringConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+    command:
+      - bash
+      - -c
+      - |
+        echo "Installing connector plugins..."
+        confluent-hub install --no-prompt confluentinc/kafka-connect-jdbc:10.7.6
+        confluent-hub install --no-prompt mongodb/kafka-connect-mongodb:latest
+        echo "Connector plugins installed. Starting Connect..."
+        /etc/confluent/docker/run
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+    networks:
+      - testbed-net
+
+  # ---------------------------------------------------------------------------
+  # MongoDB 7.0 (with authentication)
+  # ---------------------------------------------------------------------------
+  mongodb:
+    image: mongo:${MONGO_VERSION:-7.0}
+    hostname: mongodb
+    container_name: testbed-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-testuser}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASS:-testpass}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-testdb}
+    volumes:
+      - ./init/mongo-init.js:/docker-entrypoint-initdb.d/01-init.js:ro
+      - mongodb-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok", "-u", "testuser", "-p", "testpass", "--authenticationDatabase", "admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - testbed-net
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-16}
+    hostname: postgres
+    container_name: testbed-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pguser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pgpass}
+      POSTGRES_DB: ${POSTGRES_DB:-testdb}
+    volumes:
+      - ./init/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pguser} -d ${POSTGRES_DB:-testdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - testbed-net
+
+  # ---------------------------------------------------------------------------
+  # IBM DB2 Community Edition 11.5
+  # ---------------------------------------------------------------------------
+  # NOTE: DB2 image is x86_64 only. On Apple Silicon (M1/M2/M3/M4), Docker
+  # Desktop uses Rosetta 2 emulation. Startup may take 5-10 minutes.
+  # To skip DB2: docker compose up -d --scale db2=0
+  # ---------------------------------------------------------------------------
+  db2:
+    image: icr.io/db2_community/db2:${DB2_VERSION:-11.5.9.0}
+    hostname: db2
+    container_name: testbed-db2
+    platform: linux/amd64
+    privileged: true
+    ports:
+      - "50000:50000"
+    environment:
+      LICENSE: accept
+      DB2INST1_PASSWORD: ${DB2_PASSWORD:-db2pass}
+      DBNAME: ${DB2_DATABASE:-TESTDB}
+      ARCHIVE_LOGS: "false"
+      AUTOCONFIG: "false"
+    volumes:
+      - ./init/db2-init.sql:/var/custom/db2-init.sql:ro
+      - db2-data:/database
+    healthcheck:
+      test: ["CMD-SHELL", "su - db2inst1 -c 'db2 connect to TESTDB > /dev/null 2>&1 && db2 disconnect TESTDB > /dev/null 2>&1' || exit 1"]
+      interval: 30s
+      timeout: 30s
+      retries: 20
+      start_period: 180s
+    networks:
+      - testbed-net
+
+  # ---------------------------------------------------------------------------
+  # kshark (built from local source)
+  # ---------------------------------------------------------------------------
+  kshark:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    hostname: kshark
+    container_name: testbed-kshark
+    depends_on:
+      kafka:
+        condition: service_healthy
+      connect:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      # db2 dependency removed — use --scale db2=0 to skip DB2
+    volumes:
+      - ./configs:/configs:ro
+      - ./run-tests.sh:/run-tests.sh:ro
+    entrypoint: [""]
+    command: ["/bin/sh", "-c", "echo 'kshark testbed ready. Run: docker compose exec kshark /run-tests.sh' && tail -f /dev/null"]
+    networks:
+      - testbed-net
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  mongodb-data:
+    driver: local
+  postgres-data:
+    driver: local
+  db2-data:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  testbed-net:
+    name: testbed-net
+    driver: bridge
