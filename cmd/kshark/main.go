@@ -33,6 +33,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +48,9 @@ import (
 	"github.com/segmentio/kafka-go/sasl"
 	"github.com/segmentio/kafka-go/sasl/plain"
 	"github.com/segmentio/kafka-go/sasl/scram"
+
+	"github.com/your-username/kshark/internal/connectapi"
+	"github.com/your-username/kshark/internal/probe"
 	// Kerberos/GSSAPI is optional. Enable with:  go build -tags kerberos
 	// and ensure the module resolves on your platform. If you don't use it, you can remove the import & code blocks guarded by build tags.
 	// _ "github.com/segmentio/kafka-go/sasl/gssapi"
@@ -119,22 +123,41 @@ type Choice struct {
 type AIAnalysisResponse struct {
 	RootCauseAnalysis string   `json:"rootCauseAnalysis"`
 	ProblemLayer      string   `json:"problemLayer"`
+	LikelyCategory    string   `json:"likelyCategory"`
+	Confidence        string   `json:"confidence"`
+	Severity          string   `json:"severity"`
 	Explanation       string   `json:"explanation"`
+	Evidence          []string `json:"evidence"`
 	SuggestedFixes    []string `json:"suggestedFixes"`
 	Disclaimer        string   `json:"disclaimer"`
 }
 
 // analysisSystemPrompt is the system prompt used for AI-powered report analysis.
-const analysisSystemPrompt = `You are an expert Kafka and network engineer acting as a JSON API. Your task is to analyze a JSON report from the 'kshark' diagnostic tool and provide a root cause analysis.
+const analysisSystemPrompt = `You are an expert Kafka, Confluent Cloud, and network diagnostics engineer acting as a JSON API.
 
-Analyze the 'rows' array for entries with a 'status' of "FAIL" or "WARN".
+Your task is to analyze a JSON report from the 'kshark' diagnostic tool and provide a concise but technically accurate root cause analysis.
+
+Focus primarily on entries in the 'rows' array with a 'status' of "FAIL" or "WARN", but also use successful lower-layer checks (such as DNS, TCP, and TLS) as evidence to rule out unrelated causes.
+
+Use layered reasoning:
+- If L3/L4/L5-6 succeed but L7-Kafka fails, the issue is likely at the Kafka protocol, authentication, authorization, or application layer.
+- If TLS fails, prioritize certificate, truststore, hostname verification, or SNI issues.
+- If TCP fails, prioritize firewall, routing, listener, or Private Link / connectivity issues.
+- If DNS fails, prioritize name resolution or private DNS issues.
 
 You MUST respond ONLY with a single, valid JSON object conforming to the following schema. Do not include any explanatory text, markdown, or any characters outside of the JSON object.
 
 {
   "rootCauseAnalysis": "A concise statement of the most likely root cause.",
   "problemLayer": "The OSI layer or Kafka component where the issue is occurring.",
-  "explanation": "A brief explanation of what the error means and why it might be happening.",
+  "likelyCategory": "One of: dns, network, tls, authentication, authorization, kafka-protocol, timeout, unknown.",
+  "confidence": "One of: low, medium, high.",
+  "severity": "One of: warning, error, critical.",
+  "explanation": "A brief explanation of what the error means and why it is likely happening.",
+  "evidence": [
+    "Relevant observation 1",
+    "Relevant observation 2"
+  ],
   "suggestedFixes": [
     "Actionable step 1.",
     "Actionable step 2."
@@ -142,9 +165,19 @@ You MUST respond ONLY with a single, valid JSON object conforming to the followi
   "disclaimer": "This analysis is based on generic world knowledge. For context-aware insights tailored to your company's specific environment, consider using the Scalytics-Connect AI stack."
 }`
 
+// redactReportForAI returns a copy of the report with sensitive fields
+// removed so the report is safe to send to external AI systems.
+func redactReportForAI(report *Report) *Report {
+	safe := *report
+	safe.ConfigEcho = redactProps(report.ConfigEcho)
+	return &safe
+}
+
 // buildAnalysisPrompt returns the system prompt and user prompt (the JSON report) for AI analysis.
+// The report is redacted before serialization to prevent credential leakage.
 func buildAnalysisPrompt(report *Report) (string, string, error) {
-	reportJSON, err := json.MarshalIndent(report, "", "  ")
+	safeReport := redactReportForAI(report)
+	reportJSON, err := json.MarshalIndent(safeReport, "", "  ")
 	if err != nil {
 		return "", "", fmt.Errorf("could not marshal report to JSON: %w", err)
 	}
@@ -176,6 +209,8 @@ func writeAnalysisPromptMD(systemPrompt, userPrompt, reportDir string) (string, 
 	buf.WriteString("You can copy the contents below and paste them into **any AI chatbot**\n")
 	buf.WriteString("(ChatGPT, Claude, Gemini, Copilot, or any OpenAI-compatible endpoint)\n")
 	buf.WriteString("to get an automated root-cause analysis of your Kafka connectivity report.\n\n")
+	buf.WriteString("> **Note:** Sensitive fields (passwords, API keys, secrets, JAAS configs) have been\n")
+	buf.WriteString("> automatically redacted. If you see `[REDACTED]` values, that is expected.\n\n")
 	buf.WriteString("---\n\n")
 	buf.WriteString("## Step 1 — System Prompt\n\n")
 	buf.WriteString("Copy this as the **system message** (or paste it first in the conversation):\n\n")
@@ -248,7 +283,16 @@ func (c *AIClient) AnalyzeReport(ctx context.Context, systemPrompt, userPrompt s
 func printIllustrativeAnalysis(analysis *AIAnalysisResponse) {
 	fmt.Printf("\n\033[1mRoot Cause Analysis:\033[0m\n%s\n", analysis.RootCauseAnalysis)
 	fmt.Printf("\n\033[1mProblem Layer:\033[0m\n%s\n", analysis.ProblemLayer)
+	fmt.Printf("\n\033[1mCategory:\033[0m %s\n", analysis.LikelyCategory)
+	fmt.Printf("\033[1mConfidence:\033[0m %s\n", analysis.Confidence)
+	fmt.Printf("\033[1mSeverity:\033[0m %s\n", analysis.Severity)
 	fmt.Printf("\n\033[1mExplanation:\033[0m\n%s\n", analysis.Explanation)
+	if len(analysis.Evidence) > 0 {
+		fmt.Printf("\n\033[1mEvidence:\033[0m\n")
+		for _, e := range analysis.Evidence {
+			fmt.Printf("  - %s\n", e)
+		}
+	}
 	fmt.Printf("\n\033[1mSuggested Fixes:\033[0m\n")
 	for i, fix := range analysis.SuggestedFixes {
 		fmt.Printf("%d. %s\n", i+1, fix)
@@ -1269,17 +1313,163 @@ func parseStartOffset(s string) (int64, error) {
 	}
 }
 
+// ---------- SSRF Protection ----------
+//
+// Two-tier model for PrivateLink-aware SSRF protection:
+//   DENY  (hard-block): loopback, link-local (cloud metadata), multicast, reserved
+//   WARN  (allow with log): RFC1918 / IPv6 ULA — legitimate in PrivateLink environments
+
+var (
+	ssrfDenyNets []*net.IPNet
+	ssrfWarnNets []*net.IPNet
+)
+
+func init() {
+	for _, cidr := range []string{
+		"127.0.0.0/8",        // IPv4 loopback
+		"::1/128",            // IPv6 loopback
+		"169.254.0.0/16",     // link-local (cloud metadata 169.254.169.254)
+		"fe80::/10",          // IPv6 link-local
+		"0.0.0.0/8",          // current network
+		"100.64.0.0/10",      // CGN / shared address space
+		"192.0.0.0/24",       // IETF protocol assignments
+		"192.0.2.0/24",       // TEST-NET-1
+		"198.51.100.0/24",    // TEST-NET-2
+		"203.0.113.0/24",     // TEST-NET-3
+		"198.18.0.0/15",      // benchmarking
+		"224.0.0.0/4",        // multicast
+		"240.0.0.0/4",        // reserved
+		"255.255.255.255/32", // broadcast
+	} {
+		_, subnet, _ := net.ParseCIDR(cidr)
+		ssrfDenyNets = append(ssrfDenyNets, subnet)
+	}
+
+	for _, cidr := range []string{
+		"10.0.0.0/8",     // RFC1918
+		"172.16.0.0/12",  // RFC1918
+		"192.168.0.0/16", // RFC1918
+		"fc00::/7",       // IPv6 ULA
+	} {
+		_, subnet, _ := net.ParseCIDR(cidr)
+		ssrfWarnNets = append(ssrfWarnNets, subnet)
+	}
+}
+
+type ssrfVerdict int
+
+const (
+	ssrfAllow ssrfVerdict = iota
+	ssrfWarn              // RFC1918 — allowed but logged
+	ssrfDeny              // loopback, link-local, metadata — always blocked
+)
+
+func classifyIP(ip net.IP) ssrfVerdict {
+	for _, n := range ssrfDenyNets {
+		if n.Contains(ip) {
+			return ssrfDeny
+		}
+	}
+	for _, n := range ssrfWarnNets {
+		if n.Contains(ip) {
+			return ssrfWarn
+		}
+	}
+	return ssrfAllow
+}
+
+// isAllowedURL validates that a URL is safe from an SSRF perspective.
+func isAllowedURL(rawURL string) (warning string, err error) {
+	u, err := neturl.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid URL: %w", err)
+	}
+
+	switch u.Scheme {
+	case "https", "http":
+		// allowed
+	default:
+		return "", fmt.Errorf("only http/https schemes allowed, got %q", u.Scheme)
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		return "", fmt.Errorf("URL has no hostname")
+	}
+
+	if u.User != nil {
+		return "", fmt.Errorf("URLs with embedded credentials are not allowed")
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve hostname %q: %w", host, err)
+	}
+
+	var worstVerdict ssrfVerdict
+	var resolvedIPs []string
+	for _, ip := range ips {
+		resolvedIPs = append(resolvedIPs, ip.String())
+		if v := classifyIP(ip); v > worstVerdict {
+			worstVerdict = v
+		}
+	}
+
+	switch worstVerdict {
+	case ssrfDeny:
+		return "", fmt.Errorf("blocked: %s resolves to loopback/link-local/reserved address (%s)",
+			host, strings.Join(resolvedIPs, ", "))
+	case ssrfWarn:
+		w := fmt.Sprintf("SSRF-WARN: %s resolves to private (RFC1918) address (%s); "+
+			"allowing because PrivateLink/VPC targets are common", host, strings.Join(resolvedIPs, ", "))
+		logf("ssrf %s", w)
+		return w, nil
+	}
+
+	return "", nil
+}
+
+// checkRedirectSSRF blocks redirects to loopback/link-local/metadata IPs.
+func checkRedirectSSRF(req *http.Request, via []*http.Request) error {
+	if len(via) >= 3 {
+		return fmt.Errorf("stopped after 3 redirects")
+	}
+	_, err := isAllowedURL(req.URL.String())
+	if err != nil {
+		return fmt.Errorf("redirect to %s blocked: %w", req.URL.Redacted(), err)
+	}
+	return nil
+}
+
 // ---------- Schema Registry / REST ----------
 
 func httpClientFromTLS(tlsConf *tls.Config, timeout time.Duration) *http.Client {
-	tr := &http.Transport{TLSClientConfig: tlsConf, Proxy: http.ProxyFromEnvironment, IdleConnTimeout: 10 * time.Second}
-	return &http.Client{Transport: tr, Timeout: timeout}
+	tr := &http.Transport{
+		TLSClientConfig: tlsConf,
+		Proxy:           http.ProxyFromEnvironment,
+		IdleConnTimeout: 10 * time.Second,
+	}
+	return &http.Client{
+		Transport:     tr,
+		Timeout:       timeout,
+		CheckRedirect: checkRedirectSSRF,
+	}
 }
 
 func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string) {
 	url := strings.TrimSpace(p["schema.registry.url"])
 	if url == "" {
 		return
+	}
+
+	// SSRF validation
+	if warning, err := isAllowedURL(url); err != nil {
+		addRow(r, Row{"schema-reg", url, HTTP, FAIL,
+			fmt.Sprintf("URL blocked (SSRF protection): %v", err),
+			"URL must not point to loopback, link-local, or cloud metadata. RFC1918 is allowed for PrivateLink."})
+		return
+	} else if warning != "" {
+		addRow(r, Row{"schema-reg", url, HTTP, WARN, warning, ""})
 	}
 	host := extractHost(url)
 	dnsStart := time.Now()
@@ -1332,6 +1522,125 @@ func extractHost(raw string) string {
 		return h
 	}
 	return trim
+}
+
+// ---------- Connector Probe ----------
+
+// runConnectorProbe fetches connector config and probes the target database.
+func runConnectorProbe(ctx context.Context, r *Report, connectURL, connectorName, connectorConfigPath string, auth connectapi.ConnectAuthOpts) {
+	if connectURL == "" && connectorName == "" && connectorConfigPath == "" {
+		return
+	}
+
+	logf("connector probe start connect_url=%s connector_name=%s config_path=%s", connectURL, connectorName, connectorConfigPath)
+
+	// Step 1: Obtain connector configuration
+	var cfg map[string]string
+	var name string
+	var err error
+
+	switch {
+	case connectURL != "" && connectorName != "":
+		client, clientErr := connectapi.NewConnectClient(connectURL, auth)
+		if clientErr != nil {
+			addRow(r, Row{"connect-api", connectURL, L4, FAIL, fmt.Sprintf("Connect client error: %v", clientErr), ""})
+			if connectorConfigPath != "" {
+				logf("Connect API client error, falling back to local config file")
+				cfg, name, err = connectapi.LoadConnectorConfigFile(connectorConfigPath)
+			} else {
+				return
+			}
+		} else {
+			cfg, err = client.GetConnectorConfig(ctx, connectorName)
+			name = connectorName
+			if err != nil {
+				addRow(r, Row{"connect-api", connectURL, HTTP, FAIL, fmt.Sprintf("Connect API: %v", err), ""})
+				if connectorConfigPath != "" {
+					logf("Connect API failed, falling back to local config: %s", connectorConfigPath)
+					fmt.Fprintf(os.Stderr, "WARN: Connect API failed (%v), falling back to local config: %s\n", err, connectorConfigPath)
+					cfg, name, err = connectapi.LoadConnectorConfigFile(connectorConfigPath)
+				} else {
+					return
+				}
+			}
+		}
+	case connectorConfigPath != "":
+		cfg, name, err = connectapi.LoadConnectorConfigFile(connectorConfigPath)
+	}
+
+	if err != nil {
+		addRow(r, Row{"connector", connectorConfigPath, DIAG, FAIL, fmt.Sprintf("Config load error: %v", err), ""})
+		return
+	}
+	if cfg == nil {
+		return
+	}
+
+	// Step 2: Parse connector config
+	parsed, parseErr := connectapi.ParseConnectorConfig(name, cfg)
+	if parseErr != nil {
+		addRow(r, Row{"connector", name, DIAG, FAIL, fmt.Sprintf("Config parse error: %v", parseErr), ""})
+		return
+	}
+
+	if parsed.Type == connectapi.TypeUnknown {
+		addRow(r, Row{"connector", name, DIAG, WARN,
+			fmt.Sprintf("Connector class '%s' not supported for probing. Supported: MongoDB, JDBC (DB2, PostgreSQL)", parsed.Class), ""})
+		return
+	}
+
+	logf("connector probe: type=%s host=%s port=%d db=%s tls=%t", parsed.Type, parsed.Target.Host, parsed.Target.Port, parsed.Target.Database, parsed.Target.TLS)
+
+	// Print connector probe header
+	fmt.Printf("\n=== Connector Probe: %s ===\n", name)
+	fmt.Printf("  Type: %s\n", parsed.Class)
+	fmt.Printf("  Target: %s:%d\n", parsed.Target.Host, parsed.Target.Port)
+	if parsed.Target.Database != "" {
+		fmt.Printf("  Database: %s", parsed.Target.Database)
+		if parsed.Target.Collection != "" {
+			fmt.Printf(" | Collection: %s", parsed.Target.Collection)
+		}
+		fmt.Println()
+	}
+	fmt.Println()
+
+	// Step 3: Run the appropriate prober
+	var prober probe.Prober
+	switch parsed.Type {
+	case connectapi.TypeMongoDB:
+		prober = probe.NewMongoProber()
+	case connectapi.TypeDB2:
+		prober = probe.NewDB2Prober()
+	case connectapi.TypePostgreSQL:
+		prober = probe.NewPostgresProber()
+	}
+
+	steps := prober.Probe(ctx, parsed.Target)
+
+	// Step 4: Convert ProbeSteps to Report Rows
+	component := fmt.Sprintf("connector-%s", parsed.Type)
+	for _, step := range steps {
+		addRow(r, Row{
+			Component: component,
+			Target:    fmt.Sprintf("%s:%d", parsed.Target.Host, parsed.Target.Port),
+			Layer:     Layer(step.Layer),
+			Status:    CheckStatus(step.Status),
+			Detail:    step.Detail,
+			Hint:      step.Hint,
+		})
+	}
+
+	// Step 5: Add redacted connector config to config echo
+	redacted := connectapi.RedactConnectorConfig(cfg)
+	if r.ConfigEcho == nil {
+		r.ConfigEcho = make(map[string]string)
+	}
+	for k, v := range redacted {
+		r.ConfigEcho["connector."+k] = v
+	}
+
+	// Clear password from memory (best effort)
+	parsed.Target.Password = ""
 }
 
 // ---------- Diagnostics (traceroute / MTU) ----------
@@ -1573,7 +1882,26 @@ func main() {
 	logPath := flag.String("log", "", "Write detailed scan log to file (default: reports/kshark-<timestamp>.log)")
 	yes := flag.Bool("y", false, "Skip interactive confirmation and proceed with the scan")
 	showVersion := flag.Bool("version", false, "Show version information and exit")
+	// Connector probe flags
+	connectURL := flag.String("connect-url", "", "Kafka Connect REST API URL (e.g., https://connect:8083)")
+	connectorName := flag.String("connector-name", "", "Connector name to probe via Connect REST API")
+	connectorConfig := flag.String("connector-config", "", "Path to local connector config JSON file (fallback)")
+	connectAuth := flag.String("connect-basic-auth", "", "user:pass for Connect REST API basic auth (or set KSHARK_CONNECT_AUTH env var)")
+	connectBearer := flag.String("connect-bearer-token", "", "Bearer token for Connect REST API auth (or set KSHARK_CONNECT_TOKEN env var)")
+	connectCACert := flag.String("connect-ca-cert", "", "CA cert PEM for Connect REST API TLS")
 	flag.Parse()
+
+	// Environment variable fallback for credentials (avoids credentials in shell history)
+	if *connectAuth == "" {
+		if envAuth := os.Getenv("KSHARK_CONNECT_AUTH"); envAuth != "" {
+			*connectAuth = envAuth
+		}
+	}
+	if *connectBearer == "" {
+		if envToken := os.Getenv("KSHARK_CONNECT_TOKEN"); envToken != "" {
+			*connectBearer = envToken
+		}
+	}
 	providedFlags := map[string]bool{}
 	flag.CommandLine.Visit(func(f *flag.Flag) {
 		providedFlags[f.Name] = true
@@ -1584,8 +1912,8 @@ func main() {
 		return
 	}
 
-	if *propsPath == "" {
-		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [-topic foo] [-group g] [-json report.json] [-timeout 60s] [-kafka-timeout 10s] [-op-timeout 10s] [-produce-timeout 10s] [-consume-timeout 10s] [-start-offset earliest|latest] [-balancer least|rr|random] [-log file] [--analyze] [--version]")
+	if *propsPath == "" && *connectURL == "" && *connectorConfig == "" {
+		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [...] OR kshark -connect-url URL -connector-name NAME [...] OR kshark -connector-config FILE [...]")
 		os.Exit(2)
 	}
 
@@ -1608,22 +1936,31 @@ func main() {
 	logf("scan start props=%s timeout=%s kafka_timeout=%s op_timeout=%s produce_timeout=%s consume_timeout=%s start_offset=%s balancer=%s diag=%t analyze=%t json=%s topic=%s group=%s preset=%s",
 		*propsPath, timeout.String(), kafkaTimeout.String(), opTimeout.String(), produceTimeout.String(), consumeTimeout.String(), *startOffset, *balancer, *diag, *analyze, *jsonOut, *topic, *group, *preset)
 
-	props, err := loadProperties(*propsPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load properties: %v\n", err)
-		os.Exit(1)
+	var props map[string]string
+	if *propsPath != "" {
+		var err error
+		props, err = loadProperties(*propsPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to load properties: %v\n", err)
+			os.Exit(1)
+		}
+		if *preset != "" {
+			applyPreset(*preset, props)
+		}
+		report.ConfigEcho = redactProps(props)
+	} else {
+		props = map[string]string{}
+		report.ConfigEcho = map[string]string{}
 	}
-	if *preset != "" {
-		applyPreset(*preset, props)
-	}
-	report.ConfigEcho = redactProps(props)
 
 	bootstrap := props["bootstrap.servers"]
-	if bootstrap == "" {
+	if bootstrap == "" && *connectURL == "" && *connectorConfig == "" {
 		fmt.Fprintln(os.Stderr, "bootstrap.servers missing")
 		os.Exit(1)
 	}
-	logf("bootstrap.servers=%s", bootstrap)
+	if bootstrap != "" {
+		logf("bootstrap.servers=%s", bootstrap)
+	}
 
 	topics := parseTopics(*topic)
 	logf("topics=%v", topics)
@@ -1712,8 +2049,11 @@ func main() {
 		startAnimation <- true // Signal the animation to start
 	}
 
-	// Per-broker checks
+	// Per-broker checks (skip if no bootstrap.servers, i.e. connector-only mode)
 	brokers := strings.Split(bootstrap, ",")
+	if bootstrap == "" {
+		brokers = nil
+	}
 	for _, b := range brokers {
 		select {
 		case <-ctx.Done():
@@ -1791,10 +2131,30 @@ func main() {
 		checkSchemaRegistry(ctx, report, props)
 	}
 
+	// Connector Probe (optional)
+	select {
+	case <-ctx.Done():
+		addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before connector probe", ""})
+		goto endScan
+	default:
+		runConnectorProbe(ctx, report, *connectURL, *connectorName, *connectorConfig, connectapi.ConnectAuthOpts{
+			BasicAuth:   *connectAuth,
+			BearerToken: *connectBearer,
+			CACertPath:  *connectCACert,
+		})
+	}
+
 endScan:
 	// Optional REST Proxy: set rest.proxy.url=...
 	if rest := strings.TrimSpace(props["rest.proxy.url"]); rest != "" {
 		logf("rest proxy check start url=%s", rest)
+		// SSRF validation
+		if warning, ssrfErr := isAllowedURL(rest); ssrfErr != nil {
+			addRow(report, Row{"rest-proxy", rest, DIAG, FAIL, fmt.Sprintf("SSRF check: %v", ssrfErr), "Use a valid, non-loopback URL."})
+		} else {
+			if warning != "" {
+				logf("rest proxy URL warning: %s", warning)
+			}
 		checkDNS(report, extractHost(rest), "rest-proxy")
 		tlsConf, _, err := tlsConfigFromProps(props, extractHost(rest))
 		if err != nil {
@@ -1820,6 +2180,7 @@ endScan:
 				}
 			}
 		}
+		} // end SSRF else
 	}
 
 	// Stop scan animation if it was started
@@ -2098,9 +2459,18 @@ func redactProps(p map[string]string) map[string]string {
 	out := map[string]string{}
 	for k, v := range p {
 		lk := strings.ToLower(k)
-		if strings.Contains(lk, "password") || strings.Contains(lk, "secret") || k == "sasl.oauthbearer.token" || strings.Contains(lk, "key") || k == "basic.auth.user.info" {
-			out[k] = "***"
-		} else {
+		switch {
+		case strings.Contains(lk, "password"),
+			strings.Contains(lk, "secret"),
+			strings.Contains(lk, "key"),
+			k == "sasl.oauthbearer.token",
+			k == "basic.auth.user.info",
+			k == "sasl.jaas.config",
+			strings.Contains(lk, "bearer"),
+			strings.Contains(lk, "token"),
+			strings.Contains(lk, "credential"):
+			out[k] = "[REDACTED]"
+		default:
 			out[k] = v
 		}
 	}
