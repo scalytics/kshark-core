@@ -609,25 +609,50 @@ const (
 	AuthGSSAPI // optional
 )
 
+func parseJaasConfig(jaas string) (username, password string) {
+	// Parse: ...PlainLoginModule required username='...' password='...';
+	for _, part := range strings.Fields(jaas) {
+		if strings.HasPrefix(part, "username=") {
+			username = strings.Trim(strings.TrimPrefix(part, "username="), "\"';")
+		} else if strings.HasPrefix(part, "password=") {
+			password = strings.Trim(strings.TrimPrefix(part, "password="), "\"';")
+		}
+	}
+	return
+}
+
+func saslCreds(p map[string]string) (string, string) {
+	user, pass := p["sasl.username"], p["sasl.password"]
+	if user == "" && pass == "" {
+		if jaas := p["sasl.jaas.config"]; jaas != "" {
+			user, pass = parseJaasConfig(jaas)
+		}
+	}
+	return user, pass
+}
+
 func saslFromProps(p map[string]string) (KafkaAuthKind, map[string]string, error) {
 	secProto := strings.ToUpper(p["security.protocol"])
 	mech := strings.ToUpper(p["sasl.mechanism"])
 
 	switch mech {
 	case "PLAIN":
+		user, pass := saslCreds(p)
 		return AuthPLAIN, map[string]string{
-			"username": p["sasl.username"],
-			"password": p["sasl.password"],
+			"username": user,
+			"password": pass,
 		}, nil
 	case "SCRAM-SHA-256":
+		user, pass := saslCreds(p)
 		return AuthSCRAM256, map[string]string{
-			"username": p["sasl.username"],
-			"password": p["sasl.password"],
+			"username": user,
+			"password": pass,
 		}, nil
 	case "SCRAM-SHA-512":
+		user, pass := saslCreds(p)
 		return AuthSCRAM512, map[string]string{
-			"username": p["sasl.username"],
-			"password": p["sasl.password"],
+			"username": user,
+			"password": pass,
 		}, nil
 	case "GSSAPI", "KERBEROS":
 		return AuthGSSAPI, map[string]string{

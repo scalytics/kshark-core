@@ -240,7 +240,7 @@ When a topic is specified, kshark performs a complete produce/consume cycle:
 
 ### SASL/PLAIN
 
-**Configuration:**
+**Configuration (Option A — explicit credentials):**
 ```properties
 security.protocol=SASL_SSL
 sasl.mechanism=PLAIN
@@ -248,10 +248,20 @@ sasl.username=your-username
 sasl.password=your-password
 ```
 
+**Configuration (Option B — JAAS config only):**
+```properties
+security.protocol=SASL_SSL
+sasl.mechanism=PLAIN
+sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username='your-username' password='your-password';
+```
+
+When `sasl.username` and `sasl.password` are not set, kshark automatically extracts credentials from `sasl.jaas.config`. This ensures compatibility with standard Java Kafka client properties files.
+
 **Use Cases:**
 - Confluent Cloud
 - Simple authentication scenarios
 - Development environments
+- Reusing existing Java client configuration files
 
 **Security Note:** Credentials sent in plaintext (use with TLS)
 
@@ -370,6 +380,7 @@ go build -tags kerberos -o kshark ./cmd/kshark
 | `sasl.mechanism` | SASL mechanism | `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512`, `GSSAPI` |
 | `sasl.username` | SASL username | API key or username |
 | `sasl.password` | SASL password | API secret or password |
+| `sasl.jaas.config` | JAAS login config (fallback for username/password) | `...PlainLoginModule required username='...' password='...';` |
 
 #### TLS/SSL Configuration
 
