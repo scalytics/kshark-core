@@ -70,8 +70,33 @@ func NewConnectClient(baseURL string, auth ConnectAuthOpts) (*ConnectClient, err
 	}, nil
 }
 
-// isLinkLocalIP checks if an IP is in the link-local range (169.254.0.0/16)
-// which includes the cloud metadata endpoint 169.254.169.254.
+// connectDenyNets are IP ranges that the Connect client must never access.
+var connectDenyNets []*net.IPNet
+
+func init() {
+	for _, cidr := range []string{
+		"127.0.0.0/8",        // IPv4 loopback
+		"::1/128",            // IPv6 loopback
+		"169.254.0.0/16",     // link-local (cloud metadata 169.254.169.254)
+		"fe80::/10",          // IPv6 link-local
+		"0.0.0.0/8",          // current network
+		"100.64.0.0/10",      // CGN / shared address space
+		"192.0.0.0/24",       // IETF protocol assignments
+		"192.0.2.0/24",       // TEST-NET-1
+		"198.51.100.0/24",    // TEST-NET-2
+		"203.0.113.0/24",     // TEST-NET-3
+		"198.18.0.0/15",      // benchmarking
+		"224.0.0.0/4",        // multicast
+		"240.0.0.0/4",        // reserved
+		"255.255.255.255/32", // broadcast
+	} {
+		_, subnet, _ := net.ParseCIDR(cidr)
+		connectDenyNets = append(connectDenyNets, subnet)
+	}
+}
+
+// isLinkLocalIP checks if a host resolves to any denied IP range
+// (loopback, link-local, cloud metadata, multicast, reserved).
 func isLinkLocalIP(host string) bool {
 	ips, err := net.LookupHost(host)
 	if err != nil {
@@ -82,9 +107,10 @@ func isLinkLocalIP(host string) bool {
 		if ip == nil {
 			continue
 		}
-		// Block link-local (169.254.0.0/16) — includes cloud metadata
-		if ip4 := ip.To4(); ip4 != nil && ip4[0] == 169 && ip4[1] == 254 {
-			return true
+		for _, n := range connectDenyNets {
+			if n.Contains(ip) {
+				return true
+			}
 		}
 	}
 	return false
@@ -156,7 +182,7 @@ func (c *ConnectClient) ListConnectors(ctx context.Context) ([]string, error) {
 	}
 
 	var names []string
-	if err := json.NewDecoder(resp.Body).Decode(&names); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&names); err != nil {
 		return nil, fmt.Errorf("failed to decode connector list: %w", err)
 	}
 	return names, nil

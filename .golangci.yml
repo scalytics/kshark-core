@@ -1,0 +1,41 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+    - ineffassign
+    - typecheck
+    - misspell
+    - gocritic
+    - revive
+    - gofmt
+    - bodyclose
+    - gosec
+    - noctx
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+        disabled: true  # allow unexported in package main
+  gosec:
+    excludes:
+      - G104  # unhandled errors on deferred Close
+      - G304  # file path from variable (expected for config loading)
+      - G204  # subprocess with variable args (validated by isValidHostname)
+  gocritic:
+    disabled-checks:
+      - ifElseChain  # acceptable in error classification functions
+
+issues:
+  exclude-dirs:
+    - testbed
+    - web
+  max-issues-per-linter: 50
+  max-same-issues: 5

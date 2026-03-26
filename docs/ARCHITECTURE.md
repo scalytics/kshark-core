@@ -1,7 +1,13 @@
+---
+layout: default
+title: Architecture
+nav_order: 2
+---
+
 # kshark Architecture Overview
 
-**Version:** 1.0
-**Last Updated:** 2025-11-13
+**Version:** 1.1
+**Last Updated:** 2026-03-26
 **Status:** Production
 
 ---
@@ -38,11 +44,12 @@
 
 | Metric | Value |
 |--------|-------|
-| **Total Lines of Code** | ~3,500+ lines (Go) across 15 source files |
+| **Total Lines of Code** | ~10,400 lines (Go) across 21 source files + 23 test files |
+| **Test Cases** | 478 unit tests + 4 fuzz targets |
 | **Programming Language** | Go 1.23.2 |
 | **Binary Size** | ~24MB (statically linked, pure Go) |
-| **Packages** | `cmd/kshark`, `internal/probe`, `internal/connectapi` |
-| **Test Coverage** | 64 unit + 10 integration tests |
+| **Packages** | `cmd/kshark` (12 files), `internal/probe` (5 files), `internal/connectapi` (4 files) |
+| **Test Coverage** | cmd/kshark 41.5%, internal/connectapi 73.6%, internal/probe 52.3%, **total 47.8%** |
 | **Dependencies** | kafka-go, mongo-driver, pgx (all pure Go, no CGO) |
 | **License** | Apache License 2.0 |
 
@@ -98,9 +105,10 @@
 ### Component Interaction
 
 ```
-User → CLI Flags → Config Parser → Health Checks → Report Builder → Output
-                                         ↓
-                                  AI Analyzer (Optional)
+User → CLI Flags → Config Parser → scanConfig → runScan(ctx) → Report Builder → Output
+                                         ↓              ↑
+                                  AI Analyzer      SIGINT/SIGTERM
+                                  (Optional)       cancels context
 ```
 
 ---
@@ -111,24 +119,39 @@ User → CLI Flags → Config Parser → Health Checks → Report Builder → Ou
 
 ```
 kshark-core/
-├── cmd/kshark/
-│   ├── main.go                  # Main application (~2500 lines)
-│   └── ssrf_test.go             # SSRF protection tests
+├── cmd/kshark/                  # CLI application (12 focused source files)
+│   ├── main.go                  # Entry point, CLI flags, scan orchestration (~714 lines)
+│   ├── ai.go                   # AI client, prompt building, analysis
+│   ├── auth.go                 # SASL authentication (PLAIN, SCRAM, JAAS fallback)
+│   ├── connector.go            # Connector probe orchestration
+│   ├── diagnostics.go          # Traceroute, MTU checks
+│   ├── httpcheck.go            # Schema Registry, REST Proxy HTTP checks
+│   ├── kafka.go                # Kafka dialer, metadata, produce/consume probes
+│   ├── properties.go           # Properties file loading, presets
+│   ├── report.go               # Report model, JSON/HTML output, summarize
+│   ├── ssrf.go                 # SSRF two-tier protection (deny/warn model)
+│   ├── tls.go                  # TLS config, certificate validation
+│   ├── util.go                 # Shared helpers (logging, file I/O, redaction)
+│   └── *_test.go               # 14 test files including 3 fuzz targets (auth, ai, kafka, ssrf, tls, ...)
 ├── internal/
 │   ├── probe/                   # Database probing engine
 │   │   ├── types.go             # ProbeTarget, ProbeStep, Prober interface
 │   │   ├── common.go            # ProbeDNS, ProbeTCP, ProbeTLS helpers
 │   │   ├── common_test.go       # Probe helper tests
 │   │   ├── mongodb.go           # MongoDB prober (mongo-driver)
+│   │   ├── mongodb_test.go      # MongoDB prober tests
 │   │   ├── postgres.go          # PostgreSQL prober (pgx)
+│   │   ├── postgres_test.go     # PostgreSQL prober tests
 │   │   ├── db2.go               # DB2 DRDA wire protocol prober
 │   │   └── db2_test.go          # DRDA message construction tests
 │   └── connectapi/              # Kafka Connect integration
 │       ├── client.go            # Connect REST API client (SSRF-protected)
+│       ├── client_test.go       # Connect API client tests
 │       ├── config_parser.go     # Connector type detection + extraction
 │       ├── config_parser_test.go
 │       ├── jdbc_url.go          # JDBC URL parser (DB2, PostgreSQL)
 │       ├── jdbc_url_test.go
+│       ├── jdbc_url_fuzz_test.go # JDBC URL fuzz target
 │       ├── redact.go            # Credential redaction
 │       └── redact_test.go
 ├── testbed/                     # Docker integration testbed
@@ -137,7 +160,7 @@ kshark-core/
 │   ├── init/                    # Database initialization scripts
 │   └── run-tests.sh             # 10 automated integration tests
 ├── web/templates/               # HTML report template
-├── docs/                        # Documentation
+├── docs/                        # Jekyll documentation site
 ├── Dockerfile                   # Multi-stage Alpine container
 ├── go.mod                       # Go module (kafka-go, mongo-driver, pgx)
 └── README.md                    # Project documentation
@@ -145,21 +168,29 @@ kshark-core/
 
 ### Source Code Organization
 
-The application follows a **single-file monolithic architecture** with logical sections:
+The application follows a **multi-file modular architecture** within the `cmd/kshark` package, split from the original monolithic `main.go` into 12 focused source files:
 
-| Section | Lines | Description |
-|---------|-------|-------------|
-| **Data Models** | 1-68 | Type definitions (10 types) |
-| **AI Integration** | 69-232 | AI client and analysis functions (4 functions) |
-| **Properties & Config** | 233-372 | Configuration loading and parsing (3 functions) |
-| **TLS & Certificate Handling** | 373-530 | TLS configuration and certificate validation (6 functions) |
-| **SASL Authentication** | 531-589 | SASL mechanism configuration (1 function) |
-| **Kafka Connectivity** | 590-756 | Kafka connection and dialer setup (2 functions) |
-| **Schema Registry** | 757-817 | Schema Registry health checks (2 functions) |
-| **Network Diagnostics** | 818-955 | Traceroute and MTU checks (6 functions) |
-| **Main Entry Point** | 956-1024 | CLI flag parsing and initialization (1 function) |
-| **Core Scanning Logic** | 1025-1204 | Layered connectivity checks (main scan) |
-| **Report Generation** | 1205-1350 | Output formatting and file generation (9 functions) |
+| File | Responsibility |
+|------|---------------|
+| **main.go** (~714 lines) | Entry point, CLI flag parsing, `scanConfig` struct, `runScan()` orchestration, `checkRESTProxy()`, signal handling |
+| **ai.go** | AI client, prompt construction, analysis dispatch, HTML report |
+| **auth.go** | SASL mechanism setup (PLAIN, SCRAM-SHA-256/512), JAAS fallback extraction |
+| **connector.go** | Connector probe orchestration, Connect API + local config fallback |
+| **diagnostics.go** | Traceroute, MTU check, hostname validation |
+| **httpcheck.go** | Schema Registry and REST Proxy HTTP health checks |
+| **kafka.go** | Kafka dialer construction, metadata fetch, produce/consume probes |
+| **properties.go** | Properties file parser with `os.ExpandEnv()`, presets, `warnInsecurePermissions()` |
+| **report.go** | Report data model, JSON/HTML output, summarize, pretty-print |
+| **ssrf.go** | Two-tier SSRF protection: DENY loopback/link-local/metadata, WARN RFC1918 |
+| **tls.go** | TLS config builder, certificate chain validation, expiry checks |
+| **util.go** | Shared helpers: slog init, file I/O, SHA256 checksums, redaction |
+
+Internal packages provide reusable logic:
+
+| Package | Responsibility |
+|---------|---------------|
+| **internal/probe** | Database prober interface + implementations (MongoDB, PostgreSQL, DB2 DRDA) |
+| **internal/connectapi** | Kafka Connect REST client, connector config parser, JDBC URL parser, credential redaction |
 
 ---
 
@@ -175,10 +206,9 @@ The application follows a **single-file monolithic architecture** with logical s
 - `license.key` - Premium feature activation (JSON)
 
 **Key Functions:**
-- `loadProperties()` (Lines 346-372) - Parse Java-style properties files
-- `loadAIConfig()` (Lines 69-82) - Load AI configuration
-- `checkLicense()` (Lines 232-245) - Validate license file
-- `applyPreset()` (Lines 378-403) - Apply quick configuration presets
+- `loadProperties()` (`cmd/kshark/properties.go`) - Parse Java-style properties files with `os.ExpandEnv()` for `${VAR}` expansion
+- `loadAIConfig()` (`cmd/kshark/ai.go`) - Load AI configuration
+- `applyPreset()` (`cmd/kshark/properties.go`) - Apply quick configuration presets
 
 **Configuration Flow:**
 ```
@@ -199,7 +229,7 @@ CLI Flags → Preset (optional) → Properties File → Default Values → Confi
 
 #### 2.1 Layer 3 - Network (DNS)
 
-**Function:** `checkDNS()` (Lines 1069-1082)
+**Function:** `checkDNS()` (`cmd/kshark/httpcheck.go`)
 
 **Checks:**
 - DNS resolution of broker hostnames
@@ -212,7 +242,7 @@ CLI Flags → Preset (optional) → Properties File → Default Values → Confi
 
 #### 2.2 Layer 4 - Transport (TCP)
 
-**Function:** TCP connection logic (Lines 1084-1096)
+**Function:** `checkTCP()` (`cmd/kshark/httpcheck.go`)
 
 **Checks:**
 - TCP connection establishment
@@ -225,11 +255,11 @@ CLI Flags → Preset (optional) → Properties File → Default Values → Confi
 
 #### 2.3 Layer 5-6 - Security (TLS)
 
-**Functions:**
-- `tlsConfigFromProps()` (Lines 417-454) - Build TLS configuration
-- `wrapTLS()` (Lines 456-489) - Perform TLS handshake
-- `peerCN()` (Lines 491-498) - Extract peer certificate CN
-- `earliestExpiry()` (Lines 500-509) - Find earliest certificate expiry
+**Functions** (`cmd/kshark/tls.go`):
+- `tlsConfigFromProps()` - Build TLS configuration
+- `wrapTLS()` - Perform TLS handshake
+- `peerCN()` - Extract peer certificate CN
+- `earliestExpiry()` - Find earliest certificate expiry
 
 **Checks:**
 - TLS handshake success
@@ -249,11 +279,11 @@ CLI Flags → Preset (optional) → Properties File → Default Values → Confi
 
 #### 2.4 Layer 7 - Application (Kafka Protocol)
 
-**Functions:**
-- `dialerFromProps()` (Lines 591-667) - Create Kafka dialer
-- `kafkaConn()` (Lines 669-708) - Establish Kafka connection
-- `checkTopic()` (Lines 710-735) - Verify topic visibility
-- `probeProduceConsume()` (Lines 737-754) - End-to-end data flow test
+**Functions** (`cmd/kshark/kafka.go`):
+- `dialerFromProps()` - Create Kafka dialer with SASL/TLS
+- `kafkaConn()` - Establish Kafka connection
+- `checkTopic()` - Verify topic visibility via metadata
+- `probeProduceConsume()` - End-to-end data flow test
 
 **Checks:**
 - Kafka protocol handshake
@@ -273,8 +303,9 @@ CLI Flags → Preset (optional) → Properties File → Default Values → Confi
 
 #### 2.5 Layer 7 - HTTP Services
 
-**Functions:**
-- `checkSchemaRegistry()` (Lines 761-799) - Test Schema Registry
+**Functions** (`cmd/kshark/httpcheck.go`, `cmd/kshark/main.go`):
+- `checkSchemaRegistry()` - Test Schema Registry
+- `checkRESTProxy()` - Test REST Proxy (extracted to testable function in `main.go`)
 - Schema Registry subject listing
 
 **Checks:**
@@ -287,10 +318,10 @@ CLI Flags → Preset (optional) → Properties File → Default Values → Confi
 
 #### 2.6 Diagnostics Layer
 
-**Functions:**
-- `bestEffortTraceroute()` (Lines 842-912) - Network path tracing
-- `mtuCheck()` (Lines 914-955) - Maximum Transmission Unit discovery
-- `isValidHostname()` (Lines 829-840) - Hostname sanitization
+**Functions** (`cmd/kshark/diagnostics.go`):
+- `bestEffortTraceroute()` - Network path tracing
+- `mtuCheck()` - Maximum Transmission Unit discovery
+- `isValidHostname()` - Hostname sanitization
 
 **Checks:**
 - Network path visualization (traceroute/tracepath/tracert)
@@ -307,7 +338,7 @@ CLI Flags → Preset (optional) → Properties File → Default Values → Confi
 
 #### 3.1 Data Model
 
-**Report Structure** (Lines 36-45):
+**Report Structure** (`cmd/kshark/report.go`):
 ```go
 type Report struct {
     Timestamp   string            // Scan timestamp
@@ -318,7 +349,7 @@ type Report struct {
 }
 ```
 
-**Row Structure** (Lines 30-38):
+**Row Structure** (`cmd/kshark/report.go`):
 ```go
 type Row struct {
     Component string      // e.g., "dns", "tcp", "tls"
@@ -333,7 +364,7 @@ type Row struct {
 #### 3.2 Output Formats
 
 **1. Console Output (Pretty Print)**
-- Function: `printPretty()` (Lines 1220-1265)
+- Function: `printPretty()` (`cmd/kshark/report.go`)
 - Features:
   - Color-coded status (green=OK, yellow=WARN, red=FAIL, gray=SKIP)
   - Grouped by layer
@@ -341,7 +372,7 @@ type Row struct {
   - TTY detection for color support
 
 **2. HTML Report**
-- Function: `writeHTMLReport()` (Lines 1267-1295)
+- Function: `writeHTMLReport()` (`cmd/kshark/ai.go`)
 - Template: `web/templates/report_template.html`
 - Features:
   - Responsive design
@@ -351,7 +382,7 @@ type Row struct {
   - Timestamp and configuration echo
 
 **3. JSON Export (Premium)**
-- Function: `writeJSON()` (Lines 1324-1338)
+- Function: `writeJSON()` (`cmd/kshark/report.go`)
 - Features:
   - Machine-readable format
   - Includes full report structure
@@ -360,7 +391,7 @@ type Row struct {
 
 #### 3.3 Report Aggregation
 
-**Function:** `summarize()` (Lines 1206-1218)
+**Function:** `summarize()` (`cmd/kshark/report.go`)
 
 **Metrics per Layer:**
 - Total checks
@@ -383,7 +414,7 @@ Report → AI Client → API Provider → AI Analysis → Enhanced Report
 
 #### 4.2 Components
 
-**AIClient Structure** (Lines 16-22):
+**AIClient Structure** (`cmd/kshark/ai.go`):
 ```go
 type AIClient struct {
     config     *AIProviderConfig
@@ -403,12 +434,12 @@ type AIClient struct {
 #### 4.3 Analysis Flow
 
 1. **Report Submission**
-   - Function: `AnalyzeReport()` (Lines 122-232)
+   - Function: `AnalyzeReport()` (`cmd/kshark/ai.go`)
    - Serializes report to JSON
    - Constructs analysis prompt
    - Sends to AI provider via REST API
 
-2. **Analysis Prompt** (Lines 138-150)
+2. **Analysis Prompt** (`cmd/kshark/ai.go`)
    ```
    You are a Kafka diagnostics expert. Analyze this connectivity report...
 
@@ -426,7 +457,7 @@ type AIClient struct {
    - Falls back to basic report if AI unavailable
 
 4. **Output Integration**
-   - Function: `printIllustrativeAnalysis()` (Lines 84-120)
+   - Function: `printIllustrativeAnalysis()` (`cmd/kshark/ai.go`)
    - Displays analysis with visual separators
    - Markdown formatting support
 
@@ -450,26 +481,39 @@ type AIClient struct {
    - Path traversal prevention
    - Command injection protection
 
-2. **Credential Protection**
-   - Redaction function for sensitive fields
-   - Excludes passwords, secrets, tokens from reports
-   - Function: `redactProps()` (Lines 1339-1350)
+2. **SSRF Protection** (`cmd/kshark/ssrf.go`)
+   - Two-tier model: DENY loopback/link-local/metadata IPs, WARN RFC1918
+   - Redirect-based SSRF bypass prevention (`CheckRedirect` handler)
+   - URL scheme validation (http/https only)
+   - Response body size limits (1MB) via `io.LimitReader`
 
-3. **TLS Enforcement**
+3. **Credential Protection**
+   - Redaction function for sensitive fields (passwords, secrets, tokens, bearer, JAAS)
+   - Credential scrubbing in database probe error messages (`ScrubCredentials`)
+   - Connect API auth via environment variables (`KSHARK_CONNECT_AUTH`, `KSHARK_CONNECT_TOKEN`)
+   - Functions in `cmd/kshark/util.go` and `internal/connectapi/redact.go`
+
+4. **Structured Logging** (`log/slog`)
+   - Configurable format: `--log-format text|json`
+   - Security events logged (authentication attempts, API calls, SSRF blocks)
+   - Scan log written to file with SHA256 checksum
+
+5. **TLS Enforcement**
    - Minimum TLS 1.2
-   - Certificate validation
+   - Certificate validation and chain checking
    - Custom CA support
+   - Certificate expiry monitoring (<30 days warning)
 
-4. **Secure Defaults**
+6. **Secure Defaults**
    - Non-root Docker user
    - Timeouts on all network operations
    - Fail-safe error handling
+   - SHA256 checksums for report artifacts
 
 #### Security Concerns (See SECURITY.md for details)
 
-- **SSRF Risk:** Unvalidated Schema Registry/REST Proxy URLs
-- **Credential Storage:** Plain-text configuration files
-- **Logging:** Insufficient security event logging
+- **Credential Storage:** Plain-text configuration files (mitigated with env var support and file permissions)
+- **Memory Zeroability:** Credentials held as `string` rather than `[]byte` (low priority)
 
 ---
 
@@ -484,53 +528,60 @@ type AIClient struct {
 │  Config Files   │
 └────────┬────────┘
          ↓
-┌─────────────────┐
-│  Initialization │
-│ • Load config   │
-│ • Check license │
-│ • Build dialer  │
-└────────┬────────┘
-         ↓
+┌─────────────────┐     ┌──────────────────┐
+│  Initialization │     │  Signal Handler  │
+│ • Load config   │     │  SIGINT/SIGTERM  │
+│ • ExpandEnv     │     │  → cancel(ctx)   │
+│ • Warn perms    │     └────────┬─────────┘
+│ • Build scanCfg │              │ (cancels
+└────────┬────────┘              │  context)
+         ↓                       ↓
 ┌─────────────────┐
 │   Scan Plan     │
 │ • Display plan  │
 │ • User confirm  │
 └────────┬────────┘
          ↓
-┌─────────────────┐
-│ L3: DNS Check   │
-│ Resolve hostname│
-└────────┬────────┘
-         ↓
-┌─────────────────┐
-│ L4: TCP Check   │
-│ Connect to port │
-└────────┬────────┘
-         ↓
-┌─────────────────┐
-│ L5-6: TLS Check │
-│ Handshake + Cert│
-└────────┬────────┘
-         ↓
-┌─────────────────┐
-│ L7: Kafka Check │
-│ • Metadata      │
-│ • Topic check   │
-│ • Produce/Consume│
-└────────┬────────┘
-         ↓
-┌─────────────────┐
-│ L7: HTTP Checks │
-│ • Schema Reg    │
-│ • REST Proxy    │
-└────────┬────────┘
-         ↓
-┌─────────────────┐
-│  Diagnostics    │
-│ • Traceroute    │
-│ • MTU Check     │
-└────────┬────────┘
-         ↓
+┌──────────────────────────────────────────┐
+│          runScan(ctx, report, cfg)        │
+│  (all checks guarded by ctx.Done())      │
+│                                          │
+│  ┌─────────────────┐                     │
+│  │ L3: DNS Check   │                     │
+│  │ Resolve hostname│                     │
+│  └────────┬────────┘                     │
+│           ↓                              │
+│  ┌─────────────────┐                     │
+│  │ L4: TCP Check   │                     │
+│  │ Connect to port │                     │
+│  └────────┬────────┘                     │
+│           ↓                              │
+│  ┌─────────────────┐                     │
+│  │ L5-6: TLS Check │                     │
+│  │ Handshake + Cert│                     │
+│  └────────┬────────┘                     │
+│           ↓                              │
+│  ┌─────────────────┐                     │
+│  │ L7: Kafka Check │                     │
+│  │ • Metadata      │                     │
+│  │ • Topic check   │                     │
+│  │ • Produce/Consume│                    │
+│  └────────┬────────┘                     │
+│           ↓                              │
+│  ┌─────────────────┐                     │
+│  │ L7: HTTP Checks │                     │
+│  │ • Schema Reg    │                     │
+│  │ • Connector Probe│                    │
+│  │ • REST Proxy    │                     │
+│  └────────┬────────┘                     │
+│           ↓                              │
+│  ┌─────────────────┐                     │
+│  │  Diagnostics    │                     │
+│  │ • Traceroute    │                     │
+│  │ • MTU Check     │                     │
+│  └─────────────────┘                     │
+└──────────────────┬───────────────────────┘
+                   ↓
 ┌─────────────────┐
 │ Generate Report │
 │ • Summarize     │
@@ -598,16 +649,21 @@ CGO_ENABLED=0           # Static linking
 ```
 kshark
 ├── github.com/segmentio/kafka-go (v0.4.49)
-│   ├── github.com/klauspost/compress (v1.15.9)
+│   ├── github.com/klauspost/compress (v1.16.7)
 │   ├── github.com/pierrec/lz4/v4 (v4.1.15)
 │   ├── github.com/xdg-go/pbkdf2 (v1.0.0)
 │   ├── github.com/xdg-go/scram (v1.1.2)
 │   │   └── github.com/xdg-go/stringprep (v1.0.4)
 │   │       └── golang.org/x/text (v0.23.0)
-│   └── golang.org/x/net (v0.38.0)
+│   └── golang.org/x/sync (v0.12.0)
+├── go.mongodb.org/mongo-driver/v2 (v2.1.0)
+├── github.com/jackc/pgx/v5 (v5.7.4)
+│   ├── github.com/jackc/pgpassfile (v1.0.0)
+│   └── github.com/jackc/pgservicefile
 └── Standard Library
     ├── crypto/tls
     ├── encoding/json
+    ├── log/slog
     ├── net/http
     ├── html/template
     └── ...
@@ -617,18 +673,18 @@ kshark
 
 ## Design Patterns
 
-### 1. Monolithic Single-File Pattern
+### 1. Multi-File Package Architecture
 
 **Rationale:**
-- Simplifies deployment (single binary)
-- Reduces complexity for small tool
-- Easy to understand complete flow
-- Fast compilation
+- Each file has a single, clear responsibility (~100-714 lines)
+- Easier to navigate and maintain than a monolithic file
+- Enables focused unit testing per concern
+- Simplifies code review (changes scoped to relevant file)
+- Still compiles to a single binary for easy deployment
 
 **Trade-offs:**
-- Limited modularity
-- Harder to unit test individual components
-- Potential for future refactoring as features grow
+- More files to manage (mitigated by consistent naming conventions)
+- Cross-file dependencies within the package require care
 
 ---
 
@@ -736,7 +792,7 @@ checkTLS(report, ...)
 
 **Current:** PLAIN, SCRAM-SHA-256, SCRAM-SHA-512, (Kerberos with build tag)
 
-**Extension Point:** `saslFromProps()` function (Lines 531-589)
+**Extension Point:** `saslFromProps()` function (`cmd/kshark/auth.go`)
 
 **How to Add:**
 ```go
@@ -772,7 +828,7 @@ case "OAUTH":
 
 **Current:** Console, HTML, JSON
 
-**Extension Point:** After report generation (Lines 1161-1178)
+**Extension Point:** After report generation in `cmd/kshark/main.go`
 
 **How to Add:**
 ```go
@@ -787,13 +843,17 @@ if *xmlOut != "" {
 
 **Current:** L3 (DNS), L4 (TCP), L5-6 (TLS), L7 (Kafka/HTTP), DIAG
 
-**Extension Point:** Main scanning loop (Lines 1064-1159)
+**Extension Point:** `runScan()` function in `cmd/kshark/main.go`
 
 **How to Add:**
 ```go
-// Add after existing checks
-if restProxy := props["rest.proxy.url"]; restProxy != "" {
-    checkRESTProxy(ctx, report, props, tlsConf)
+// Add a new phase inside runScan(), guarded by ctx.Done()
+select {
+case <-ctx.Done():
+    addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached", ""})
+    return
+default:
+    checkNewService(ctx, report, cfg.props)
 }
 ```
 
@@ -803,7 +863,7 @@ if restProxy := props["rest.proxy.url"]; restProxy != "" {
 
 **Current:** confluent-cloud, bitnami, aws-msk, plaintext
 
-**Extension Point:** `applyPreset()` function (Lines 378-403)
+**Extension Point:** `applyPreset()` function (`cmd/kshark/properties.go`)
 
 **How to Add:**
 ```go
@@ -959,29 +1019,57 @@ Create GitHub Release
 
 ## Future Architecture Considerations
 
-### Potential Improvements
+### Completed Improvements
 
-1. **Modularization**
-   - Split into packages: `config`, `checks`, `report`, `ai`
-   - Improve testability
-   - Enable plugin architecture
+1. **Modularization** (done)
+   - Split monolithic `main.go` (2,479 lines) into 12 focused files
+   - `internal/probe` and `internal/connectapi` packages extracted
+   - 23 test files (14 in cmd/kshark including 3 fuzz targets, 9 in internal/) with 478 test cases
 
-2. **Concurrency**
+2. **Structured Logging** (done)
+   - `log/slog` integration with `--log-format text|json` flag
+   - Security events logged throughout scan lifecycle
+
+3. **SSRF Protection** (done)
+   - Two-tier deny/warn model in `cmd/kshark/ssrf.go` (14 deny CIDRs + 4 warn CIDRs)
+   - Redirect validation (`checkRedirectSSRF`), bounded reads (`io.LimitReader`), scheme validation
+
+4. **Control Flow Refactor** (done)
+   - Extracted `runScan()` function replacing `goto endScan` pattern
+   - Extracted `checkRESTProxy()` as testable function
+   - `scanConfig` struct encapsulates all scan parameters
+   - All scan phases guarded by `ctx.Done()` for clean timeout/cancellation
+
+5. **Signal Handling** (done)
+   - SIGINT/SIGTERM graceful shutdown cancels scan context
+   - Existing `ctx.Done()` checks in `runScan()` handle early exit
+
+6. **Fuzz Testing** (done)
+   - 4 fuzz targets: `auth_fuzz_test.go`, `properties_fuzz_test.go`, `ssrf_fuzz_test.go`, `jdbc_url_fuzz_test.go`
+   - Covers security-critical parsers (SASL auth, properties, SSRF URL validation, JDBC URLs)
+
+7. **CI Quality Gates** (done)
+   - `.golangci.yml` with `gosec` linter enabled
+   - Coverage gate in CI pipeline
+   - `govulncheck` in weekly security scan workflow
+
+### Remaining Improvements
+
+1. **Concurrency**
    - Parallel layer checks where possible
    - Worker pool for multiple brokers
    - Async AI analysis
 
-3. **Caching**
+2. **Caching**
    - DNS result caching
    - TLS session resumption
    - Configuration caching
 
-4. **Observability**
+3. **Observability**
    - Prometheus metrics export
    - OpenTelemetry integration
-   - Structured logging (slog)
 
-5. **Persistence**
+4. **Persistence**
    - Historical report database
    - Trend analysis
    - Alerting on degradation
@@ -990,13 +1078,13 @@ Create GitHub Release
 
 ## Conclusion
 
-kshark's architecture prioritizes **simplicity, reliability, and comprehensive diagnostics**. The monolithic design is appropriate for the current feature set, while the well-defined layers and clear separation of concerns provide a solid foundation for future enhancements.
+kshark's architecture prioritizes **simplicity, reliability, and comprehensive diagnostics**. The multi-file modular design within the `cmd/kshark` package keeps each concern focused while still compiling to a single binary. The `internal/` packages (`probe`, `connectapi`) provide reusable logic for connector probing and database health checks.
 
 The layered testing approach ensures thorough validation of all connectivity components, and the optional AI integration adds intelligent analysis capabilities without compromising the core functionality.
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Author:** kshark Development Team
-**Last Review:** 2025-11-13
-**Next Review:** 2025-12-13
+**Last Review:** 2026-03-26
+**Next Review:** 2026-06-26

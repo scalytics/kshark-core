@@ -2,6 +2,8 @@ package main
 
 import (
 	"net"
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -89,5 +91,51 @@ func TestIsAllowedURL_RFC1918_Warns(t *testing.T) {
 				t.Errorf("isAllowedURL(%q) should have returned a warning", u)
 			}
 		})
+	}
+}
+
+func TestCheckRedirectSSRF_AllowedURL(t *testing.T) {
+	// Use an RFC1918 address that resolves without network calls
+	req, err := http.NewRequest("GET", "https://10.0.0.1:8081/v1/chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No prior redirects
+	via := []*http.Request{}
+	if err := checkRedirectSSRF(req, via); err != nil {
+		t.Errorf("checkRedirectSSRF() returned unexpected error for allowed URL: %v", err)
+	}
+}
+
+func TestCheckRedirectSSRF_TooManyRedirects(t *testing.T) {
+	req, err := http.NewRequest("GET", "https://api.example.com/v1/chat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dummy, _ := http.NewRequest("GET", "https://example.com/r", nil)
+	via := []*http.Request{dummy, dummy, dummy}
+
+	err = checkRedirectSSRF(req, via)
+	if err == nil {
+		t.Fatal("expected error for too many redirects")
+	}
+	if !strings.Contains(err.Error(), "3 redirects") {
+		t.Errorf("error = %v, expected mention of 3 redirects", err)
+	}
+}
+
+func TestCheckRedirectSSRF_BlockedLoopback(t *testing.T) {
+	req, err := http.NewRequest("GET", "http://127.0.0.1:8080/callback", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	via := []*http.Request{}
+
+	err = checkRedirectSSRF(req, via)
+	if err == nil {
+		t.Fatal("expected error for redirect to loopback")
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("error = %v, expected 'blocked'", err)
 	}
 }

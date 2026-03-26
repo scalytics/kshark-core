@@ -1,8 +1,40 @@
+---
+layout: default
+title: Releases
+nav_order: 6
+---
+
 # Release Guide
 
 ## Release Notes
 
-### Unreleased
+### Unreleased (RELEASE-1a)
+
+#### Added
+- `.golangci.yml` with `gosec` security linter enabled
+- Coverage gate in CI pipeline
+- Environment variable expansion in properties files (`${VAR}` syntax via `os.ExpandEnv`)
+- File permission warnings (`warnInsecurePermissions`) for properties files with mode > 0600
+- Fuzz testing: 4 fuzz targets covering auth, properties, SSRF URL validation, JDBC URL parsing
+- Signal handling: SIGINT/SIGTERM gracefully cancel the scan context
+- `scanConfig` struct encapsulates all scan parameters
+- `runScan()` function replaces `goto endScan` pattern; all phases guarded by `ctx.Done()`
+- `checkRESTProxy()` extracted as a standalone testable function
+- 478 test cases total (up from ~128), 47.8% total coverage
+
+#### Changed
+- `goto endScan` removed; replaced by `runScan()` function with structured early-return via context cancellation
+- `isLinkLocalIP` expanded to full SSRF deny list: 14 CIDR ranges (loopback, link-local, CGN, TEST-NETs, multicast, reserved, broadcast) + 4 warn ranges (RFC1918, ULA)
+- REST Proxy check now properly guarded by `ctx.Done()` inside `runScan()` (previously ran after `endScan` label)
+
+#### Security
+- AI client `CheckRedirect` handler validates redirect targets against SSRF rules
+- Bounded HTTP reads everywhere via `io.LimitReader` (1MB for Schema Registry, REST Proxy, AI, Connect API)
+- REST Proxy extracted to `checkRESTProxy()` so it can be tested with httptest
+
+---
+
+### Previously Unreleased (now in 0.2.0)
 
 #### Features
 - **Connector Config Probe (SPEC-002):** Probe MongoDB, DB2, and PostgreSQL targets by reading connector configs from Kafka Connect REST API or local JSON files. Layered diagnostics (DNS -> TCP -> TLS -> Application Protocol) with actionable hints.

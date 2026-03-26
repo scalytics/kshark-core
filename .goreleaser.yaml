@@ -45,6 +45,24 @@ checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
 
+# SBOM generation -- produces CycloneDX and SPDX for each archive
+sboms:
+  - artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.sbom.cdx.json"
+
+# Cosign signing -- keyless via GitHub OIDC (Sigstore)
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    output: true
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
 
@@ -72,6 +90,21 @@ release:
     ## kshark v{{.Version}}
 
     Cross-platform Kafka connectivity diagnostic tool.
+
+    ### Verification
+
+    ```bash
+    # Verify checksum signature (requires cosign)
+    cosign verify-blob \
+      --certificate checksums.txt.pem \
+      --signature checksums.txt.sig \
+      --certificate-identity-regexp='https://github.com/scalytics/kshark-core' \
+      --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+      checksums.txt
+
+    # Verify file integrity
+    sha256sum -c checksums.txt
+    ```
   footer: |
     ---
     **Full Changelog**: https://github.com/scalytics/kshark-core/compare/{{ .PreviousTag }}...{{ .Tag }}

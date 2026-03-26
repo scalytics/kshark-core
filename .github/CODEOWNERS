@@ -1,0 +1,13 @@
+# Default owner for all files
+* @scalytics/kshark-maintainers
+
+# Security-sensitive files require security review
+cmd/kshark/ssrf.go        @scalytics/kshark-security
+cmd/kshark/auth.go         @scalytics/kshark-security
+cmd/kshark/tls.go          @scalytics/kshark-security
+cmd/kshark/ai.go           @scalytics/kshark-security
+internal/connectapi/       @scalytics/kshark-security
+docs/SECURITY.md           @scalytics/kshark-security
+
+# CI/CD workflows
+.github/workflows/         @scalytics/kshark-maintainers

@@ -1,0 +1,44 @@
+title: kshark Documentation
+description: A powerful command-line diagnostic tool for Apache Kafka and connector target connectivity
+baseurl: "/kshark-core"
+url: "https://scalytics.github.io"
+
+remote_theme: just-the-docs/just-the-docs@v0.10.0
+
+# Navigation structure
+nav_order: 1
+
+# Search
+search_enabled: true
+search.heading_level: 3
+
+# Color scheme
+color_scheme: dark
+
+# Aux links (top right)
+aux_links:
+  "GitHub":
+    - "https://github.com/scalytics/kshark-core"
+
+aux_links_new_tab: true
+
+# Footer
+footer_content: "Copyright &copy; 2024-2026 Scalytics GmbH. Licensed under Apache 2.0."
+
+# Back to top link
+back_to_top: true
+back_to_top_text: "Back to top"
+
+# Heading anchors
+heading_anchors: true
+
+# Exclude from build
+exclude:
+  - .DS_Store
+  - images/.DS_Store
+  - SSRF_FIX_GUIDE.md
+
+# Plugins
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag

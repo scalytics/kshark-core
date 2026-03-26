@@ -1,4 +1,4 @@
-module github.com/your-username/kshark
+module github.com/scalytics/kshark-core
 
 go 1.23.2
 
