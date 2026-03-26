@@ -913,11 +913,14 @@ For security concerns and vulnerability reports, please see [SECURITY.md](docs/S
 - [x] Thread-safe concurrent diagnostics (parallel traceroute/MTU)
 - [x] CI/CD pipeline (GitHub Actions, GoReleaser, SBOM, cosign signing)
 
-**Planned:**
-- [ ] Redis, Elasticsearch connector probes
-- [ ] `--watch` mode (re-run scan on interval)
-- [ ] `kshark diff` (compare two scan results)
-- [ ] Historical trend analysis
+- [x] MySQL, SQL Server, Oracle connector probes (wire protocol, zero dependencies)
+- [x] Redis, Elasticsearch connector probes
+- [x] Broker discovery scan (advertised listener mismatch detection)
+- [x] Layered exit codes (1=DNS, 2=TCP, 3=TLS, 4=App, 5=Diag)
+- [x] `kshark doctor` (diagnostic tool availability check)
+- [x] `--watch` mode (re-run scan on interval)
+- [x] `kshark diff` (compare two scan results)
+- [x] `kshark trend` (historical scan analysis)
 
 ---
 
