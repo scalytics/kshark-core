@@ -149,8 +149,18 @@ func TestParseJDBCURL_PostgreSQL(t *testing.T) {
 	}
 }
 
+func TestParseJDBCURL_MySQL(t *testing.T) {
+	parsed, err := ParseJDBCURL("jdbc:mysql://myhost:3306/testdb")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Dialect != "mysql" || parsed.Host != "myhost" || parsed.Port != 3306 || parsed.Database != "testdb" {
+		t.Errorf("got %+v", parsed)
+	}
+}
+
 func TestParseJDBCURL_Unsupported(t *testing.T) {
-	_, err := ParseJDBCURL("jdbc:mysql://host/db")
+	_, err := ParseJDBCURL("jdbc:h2://mem:test")
 	if err == nil {
 		t.Fatal("expected error for unsupported dialect")
 	}

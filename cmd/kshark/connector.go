@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/scalytics/kshark-core/internal/connectapi"
 	"github.com/scalytics/kshark-core/internal/probe"
@@ -85,7 +87,7 @@ func runConnectorProbe(ctx context.Context, r *Report, connectURL, connectorName
 
 	if parsed.Type == connectapi.TypeUnknown {
 		addRow(r, Row{"connector", name, DIAG, WARN,
-			fmt.Sprintf("Connector class '%s' not supported for probing. Supported: MongoDB, JDBC (DB2, PostgreSQL)", parsed.Class), ""})
+			fmt.Sprintf("Connector class '%s' not supported for probing. Supported: MongoDB, JDBC (DB2, PostgreSQL, MySQL, SQL Server, Oracle)", parsed.Class), ""})
 		return
 	}
 
@@ -113,12 +115,19 @@ func runConnectorProbe(ctx context.Context, r *Report, connectURL, connectorName
 		prober = probe.NewDB2Prober()
 	case connectapi.TypePostgreSQL:
 		prober = probe.NewPostgresProber()
+	case connectapi.TypeMySQL:
+		prober = probe.NewMySQLProber()
+	case connectapi.TypeSQLServer:
+		prober = probe.NewSQLServerProber()
+	case connectapi.TypeOracle:
+		prober = probe.NewOracleProber()
 	}
 
 	steps := prober.Probe(ctx, parsed.Target)
 
-	// Step 4: Convert ProbeSteps to Report Rows
+	// Step 4: Convert ProbeSteps to Report Rows and detect L4 failure for neighborhood scan
 	component := fmt.Sprintf("connector-%s", parsed.Type)
+	var tcpFailed bool
 	for _, step := range steps {
 		addRow(r, Row{
 			Component: component,
@@ -128,6 +137,31 @@ func runConnectorProbe(ctx context.Context, r *Report, connectURL, connectorName
 			Detail:    step.Detail,
 			Hint:      step.Hint,
 		})
+		if step.Layer == "L4-TCP" && step.Status == probe.StatusFAIL {
+			tcpFailed = true
+		}
+	}
+
+	// Step 4b: Run connector-specific neighborhood scan on TCP failure
+	if tcpFailed && parsed.Target.Host != "" {
+		ports := connectorNeighborhoodPorts(string(parsed.Type))
+		portNeighborhoodResults := portNeighborhoodScan(parsed.Target.Host, parsed.Target.Port, ports, 5*time.Second)
+		icmpOK, _ := icmpReachable(parsed.Target.Host)
+		diagnosis := classifyRestriction(portNeighborhoodResults, icmpOK)
+		var parts []string
+		for _, pr := range portNeighborhoodResults {
+			status := "OPEN"
+			if pr.Status == FAIL {
+				status = "BLOCKED"
+				if pr.Detail == "refused" {
+					status = "REFUSED"
+				}
+			}
+			parts = append(parts, fmt.Sprintf("%d=%s", pr.Port, status))
+		}
+		hint := fmt.Sprintf("%s [confidence: %s] %s", diagnosis.Classification, diagnosis.Confidence, diagnosis.SuggestedAction)
+		addRow(r, Row{"neighborhood", parsed.Target.Host, DIAG, WARN,
+			fmt.Sprintf("Connector port scan: %s", strings.Join(parts, ", ")), hint})
 	}
 
 	// Step 5: Add redacted connector config to config echo

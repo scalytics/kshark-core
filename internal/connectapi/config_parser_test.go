@@ -44,10 +44,18 @@ func TestDetectConnectorType(t *testing.T) {
 			want: TypeUnknown,
 		},
 		{
-			name: "JDBC with unsupported URL",
+			name: "JDBC with MySQL URL",
 			cfg: map[string]string{
 				"connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
 				"connection.url":  "jdbc:mysql://host/db",
+			},
+			want: TypeMySQL,
+		},
+		{
+			name: "JDBC with unsupported URL",
+			cfg: map[string]string{
+				"connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+				"connection.url":  "jdbc:h2://mem:test",
 			},
 			want: TypeUnknown,
 		},
