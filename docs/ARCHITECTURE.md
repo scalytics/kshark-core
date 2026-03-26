@@ -6,7 +6,7 @@ nav_order: 2
 
 # kshark Architecture Overview
 
-**Version:** 1.1
+**Version:** 1.2
 **Last Updated:** 2026-03-26
 **Status:** Production
 
@@ -24,6 +24,9 @@ nav_order: 2
 8. [Security Architecture](#security-architecture)
 9. [Deployment Architecture](#deployment-architecture)
 10. [Extension Points](#extension-points)
+11. [Probe Direction (SPEC-003)](#probe-direction-spec-003)
+12. [Neighborhood Scan (SPEC-004)](#neighborhood-scan-spec-004)
+13. [Diagnostics Bundle (SPEC-005)](#diagnostics-bundle-spec-005)
 
 ---
 
@@ -39,6 +42,9 @@ nav_order: 2
 - **Connector Probe Engine** - Reads connector configs from Kafka Connect REST API or local JSON files
 - **External AI Integration** - Optional AI-powered analysis via REST APIs with layered reasoning
 - **Multi-Platform Support** - Cross-compiled for Linux, macOS, and Windows
+- **Probe Direction Control** - Configurable bottom-up (fail-fast) or full-scan mode with parallel diagnostics
+- **Neighborhood Scan** - Port-level and protocol-level network restriction detection with automatic classification
+- **Diagnostics Bundle** - Packaged .tar.gz with redacted Terraform state, configs, and system context
 
 ### Project Statistics
 
@@ -48,7 +54,7 @@ nav_order: 2
 | **Test Cases** | 478 unit tests + 4 fuzz targets |
 | **Programming Language** | Go 1.23.2 |
 | **Binary Size** | ~24MB (statically linked, pure Go) |
-| **Packages** | `cmd/kshark` (12 files), `internal/probe` (5 files), `internal/connectapi` (4 files) |
+| **Packages** | `cmd/kshark` (14 files), `internal/probe` (5 files), `internal/connectapi` (4 files) |
 | **Test Coverage** | cmd/kshark 41.5%, internal/connectapi 73.6%, internal/probe 52.3%, **total 47.8%** |
 | **Dependencies** | kafka-go, mongo-driver, pgx (all pure Go, no CGO) |
 | **License** | Apache License 2.0 |
@@ -119,14 +125,16 @@ User → CLI Flags → Config Parser → scanConfig → runScan(ctx) → Report 
 
 ```
 kshark-core/
-├── cmd/kshark/                  # CLI application (12 focused source files)
-│   ├── main.go                  # Entry point, CLI flags, scan orchestration (~714 lines)
+├── cmd/kshark/                  # CLI application (14 focused source files)
+│   ├── main.go                  # Entry point, CLI flags, scan orchestration
 │   ├── ai.go                   # AI client, prompt building, analysis
 │   ├── auth.go                 # SASL authentication (PLAIN, SCRAM, JAAS fallback)
+│   ├── bundle.go               # Diagnostics bundle, Terraform redaction, export commands
 │   ├── connector.go            # Connector probe orchestration
-│   ├── diagnostics.go          # Traceroute, MTU checks
+│   ├── diagnostics.go          # Traceroute, MTU checks, PMTU correlation
 │   ├── httpcheck.go            # Schema Registry, REST Proxy HTTP checks
 │   ├── kafka.go                # Kafka dialer, metadata, produce/consume probes
+│   ├── neighborhood.go         # Port neighborhood scan, restriction classification
 │   ├── properties.go           # Properties file loading, presets
 │   ├── report.go               # Report model, JSON/HTML output, summarize
 │   ├── ssrf.go                 # SSRF two-tier protection (deny/warn model)
@@ -176,11 +184,13 @@ The application follows a **multi-file modular architecture** within the `cmd/ks
 | **ai.go** | AI client, prompt construction, analysis dispatch, HTML report |
 | **auth.go** | SASL mechanism setup (PLAIN, SCRAM-SHA-256/512), JAAS fallback extraction |
 | **connector.go** | Connector probe orchestration, Connect API + local config fallback |
-| **diagnostics.go** | Traceroute, MTU check, hostname validation |
+| **bundle.go** | Diagnostics bundle creation, Terraform state redaction, system context, export commands |
+| **diagnostics.go** | Traceroute, MTU check, PMTU correlation, hostname validation |
 | **httpcheck.go** | Schema Registry and REST Proxy HTTP health checks |
 | **kafka.go** | Kafka dialer construction, metadata fetch, produce/consume probes |
 | **properties.go** | Properties file parser with `os.ExpandEnv()`, presets, `warnInsecurePermissions()` |
-| **report.go** | Report data model, JSON/HTML output, summarize, pretty-print |
+| **neighborhood.go** | Port neighborhood scan, ICMP comparison, restriction classification, summary |
+| **report.go** | Report data model (thread-safe), JSON/HTML output, summarize, pretty-print |
 | **ssrf.go** | Two-tier SSRF protection: DENY loopback/link-local/metadata, WARN RFC1918 |
 | **tls.go** | TLS config builder, certificate chain validation, expiry checks |
 | **util.go** | Shared helpers: slog init, file I/O, SHA256 checksums, redaction |
@@ -1076,15 +1086,129 @@ Create GitHub Release
 
 ---
 
+## Probe Direction (SPEC-003)
+
+The `--probe-direction` flag controls how kshark traverses the layer stack:
+
+| Mode | Flag Value | Behavior |
+|------|-----------|----------|
+| **Bottom-up (default)** | `up` | L3→L4→L5-6→L7, fail-fast at hard layer boundaries. Skips higher layers on TCP/TLS failure. |
+| **Full scan** | `full` | Attempts all applicable layers for every broker. Hard dependencies (no TCP = no TLS) still apply per-broker, but other brokers and L7 sub-checks continue. |
+
+### L7 Sub-Check Continuation
+
+Within L7, checks now continue past partial failures:
+- **SASL auth failure** → still attempts topic metadata (some clusters allow unauthenticated metadata)
+- **Topic metadata failure** → still attempts produce (different ACL path)
+- **Produce failure** → still attempts consume (different ACL)
+
+### Parallel Diagnostics
+
+Traceroute and MTU checks run in goroutines concurrent with produce/consume, reducing total scan time. A `sync.Mutex` on the `Report` struct protects concurrent `addRow` calls.
+
+### PMTU Correlation
+
+After all probes complete, `mtuCorrelation()` cross-references:
+- MTU check result (ICMP-based, OK at what size?)
+- Produce/consume result (OK or timeout?)
+
+If MTU is OK but produce timed out → emits a PMTU black hole warning.
+
+**Source:** `cmd/kshark/main.go` (runScan, runDiagnosticsParallel), `cmd/kshark/diagnostics.go` (mtuCorrelation)
+
+---
+
+## Neighborhood Scan (SPEC-004)
+
+When TCP to a Kafka port fails, kshark can probe nearby ports and protocols to classify the restriction.
+
+### Trigger Conditions
+
+- **Automatic**: When `--diag=true` (default) and TCP connect fails
+- **Explicit**: `--neighborhood` forces scan even on success (audit mode)
+
+### Scan Process
+
+```
+TCP FAIL on port 9092
+  │
+  ├─ Port Neighborhood Scan (concurrent)
+  │   ├─ TCP 80   → OPEN/BLOCKED/REFUSED
+  │   ├─ TCP 443  → OPEN/BLOCKED/REFUSED
+  │   ├─ TCP 9092 → (known FAIL)
+  │   ├─ TCP 9093 → OPEN/BLOCKED/REFUSED
+  │   ├─ TCP 9094 → OPEN/BLOCKED/REFUSED
+  │   ├─ TCP 8081 → OPEN/BLOCKED/REFUSED
+  │   └─ TCP 8083 → OPEN/BLOCKED/REFUSED
+  │
+  ├─ ICMP Reachability Check
+  │   └─ ping -c 1 host → OK/FAIL
+  │
+  └─ Restriction Classification
+      ├─ selective_port_filtering (Kafka ports blocked, 443 open)
+      ├─ host_unreachable (all blocked, ICMP blocked)
+      ├─ all_tcp_blocked (all TCP blocked, ICMP open)
+      ├─ service_not_listening (connection refused)
+      ├─ mixed_filtering (inconsistent pattern)
+      └─ no_network_restriction (all open)
+```
+
+### Report Integration
+
+Results appear as `component=neighborhood` rows with restriction classification, confidence level, and suggested action.
+
+**Source:** `cmd/kshark/neighborhood.go`
+
+---
+
+## Diagnostics Bundle (SPEC-005)
+
+The `--bundle` flag packages all diagnostic artifacts into a portable `.tar.gz` archive.
+
+### Bundle Contents
+
+```
+kshark-diag-<hostname>-<timestamp>/
+├── report.json                      # Full kshark JSON report
+├── kshark.log                       # Run log
+├── config/
+│   └── client.properties.redacted   # Redacted client properties
+├── terraform/
+│   ├── terraform.tfstate.redacted   # Redacted Terraform state (if --tf-state)
+│   └── terraform-plan.txt           # Redacted plan output (if --tf-plan)
+├── context/
+│   ├── os.txt, arch.txt, go.txt     # System info
+│   ├── hostname.txt
+│   ├── resolv.conf.txt              # DNS configuration
+│   ├── interfaces.txt               # Network interfaces
+│   └── routes.txt                   # Routing table
+└── MANIFEST.md                      # SHA256 checksums
+```
+
+### Terraform State Redaction
+
+The state JSON is walked recursively. Keys matching sensitive patterns (password, secret, api_key, token, private_key, connection_string, and Confluent-specific keys) have their values replaced with `[REDACTED]`. Both string and non-string scalar values are redacted.
+
+### Export Commands
+
+After bundle creation, kshark prints ready-to-use copy commands based on detected environment:
+- **VM/bare metal**: `scp` command
+- **Docker** (detected via `/.dockerenv`): `docker cp` command
+- **Kubernetes** (detected via `KUBERNETES_SERVICE_HOST`): `kubectl cp` command
+
+**Source:** `cmd/kshark/bundle.go`
+
+---
+
 ## Conclusion
 
 kshark's architecture prioritizes **simplicity, reliability, and comprehensive diagnostics**. The multi-file modular design within the `cmd/kshark` package keeps each concern focused while still compiling to a single binary. The `internal/` packages (`probe`, `connectapi`) provide reusable logic for connector probing and database health checks.
 
-The layered testing approach ensures thorough validation of all connectivity components, and the optional AI integration adds intelligent analysis capabilities without compromising the core functionality.
+The layered testing approach ensures thorough validation of all connectivity components. The probe direction control, neighborhood scanning, and diagnostics bundle features extend diagnostic depth while maintaining the single-binary deployment model. Optional AI integration adds intelligent analysis capabilities without compromising core functionality.
 
 ---
 
-**Document Version:** 1.1
+**Document Version:** 1.2
 **Author:** kshark Development Team
 **Last Review:** 2026-03-26
 **Next Review:** 2026-06-26

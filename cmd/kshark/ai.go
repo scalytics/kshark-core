@@ -137,9 +137,18 @@ You MUST respond ONLY with a single, valid JSON object conforming to the followi
 // redactReportForAI returns a copy of the report with sensitive fields
 // removed so the report is safe to send to external AI systems.
 func redactReportForAI(report *Report) *Report {
-	safe := *report
-	safe.ConfigEcho = redactProps(report.ConfigEcho)
-	return &safe
+	safe := &Report{
+		Rows:       report.Rows,
+		Summary:    report.Summary,
+		StartedAt:  report.StartedAt,
+		FinishedAt: report.FinishedAt,
+		ConfigEcho: redactProps(report.ConfigEcho),
+		Analysis:   report.Analysis,
+		Run:        report.Run,
+		Artifacts:  report.Artifacts,
+		HasFailed:  report.HasFailed,
+	}
+	return safe
 }
 
 // buildAnalysisPrompt returns the system prompt and user prompt (the JSON report) for AI analysis.

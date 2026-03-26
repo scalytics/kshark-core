@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -72,6 +73,7 @@ type Row struct {
 }
 
 type Report struct {
+	mu         sync.Mutex            `json:"-"`
 	Rows       []Row                 `json:"rows"`
 	Summary    map[string]CheckStats `json:"summary"`
 	StartedAt  time.Time             `json:"started_at"`
@@ -127,6 +129,8 @@ type ArtifactsMeta struct {
 }
 
 func addRow(r *Report, row Row) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if row.Status == FAIL {
 		r.HasFailed = true
 	}
