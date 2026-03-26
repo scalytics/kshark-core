@@ -6,7 +6,6 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"time"
@@ -47,8 +46,18 @@ type mysqlGreeting struct {
 	AuthPluginName  string
 }
 
-func (p *MySQLProber) Probe(ctx context.Context, target ProbeTarget) []ProbeStep {
-	var steps []ProbeStep
+func (p *MySQLProber) Probe(ctx context.Context, target ProbeTarget) (steps []ProbeStep) {
+	// Safety net: convert any remaining panic into a FAIL step.
+	defer func() {
+		if r := recover(); r != nil {
+			steps = append(steps, ProbeStep{
+				Layer:  "L7-Protocol",
+				Status: StatusFAIL,
+				Detail: fmt.Sprintf("protocol parser panic: %v", r),
+				Hint:   "Server sent malformed or unexpected response. This may not be a MySQL server.",
+			})
+		}
+	}()
 
 	// L3-DNS
 	dnsStep := ProbeDNS(target.Host)
@@ -223,7 +232,11 @@ func readMySQLGreeting(conn net.Conn, timeout time.Duration) (*mysqlGreeting, er
 	r := bytes.NewReader(pkt)
 
 	// Protocol version (1 byte)
-	g.ProtocolVersion, _ = r.ReadByte()
+	protoVer, err := r.ReadByte()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read protocol version: %w", err)
+	}
+	g.ProtocolVersion = protoVer
 	if g.ProtocolVersion != 10 {
 		return nil, fmt.Errorf("unsupported protocol version: %d", g.ProtocolVersion)
 	}
@@ -232,7 +245,10 @@ func readMySQLGreeting(conn net.Conn, timeout time.Duration) (*mysqlGreeting, er
 	var verBuf bytes.Buffer
 	for {
 		b, err := r.ReadByte()
-		if err != nil || b == 0 {
+		if err != nil {
+			break
+		}
+		if b == 0 {
 			break
 		}
 		verBuf.WriteByte(b)
@@ -240,39 +256,64 @@ func readMySQLGreeting(conn net.Conn, timeout time.Duration) (*mysqlGreeting, er
 	g.ServerVersion = verBuf.String()
 
 	// Connection ID (4 bytes)
-	binary.Read(r, binary.LittleEndian, &g.ConnectionID)
+	connID, err := readUint32LE(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read connection ID: %w", err)
+	}
+	g.ConnectionID = connID
 
 	// Auth plugin data part 1 (8 bytes)
-	authData1 := make([]byte, 8)
-	r.Read(authData1)
+	authData1, err := safeRead(r, 8)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read auth data part 1: %w", err)
+	}
 
 	// Filler (1 byte)
-	r.ReadByte()
+	if _, err := r.ReadByte(); err != nil {
+		return nil, fmt.Errorf("failed to read filler byte: %w", err)
+	}
 
 	// Capability flags lower 2 bytes
-	var capLower uint16
-	binary.Read(r, binary.LittleEndian, &capLower)
+	capLower, err := readUint16LE(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read capability flags: %w", err)
+	}
 	g.CapabilityFlags = uint32(capLower)
 
 	// If there are more bytes, continue parsing
 	if r.Len() > 0 {
 		// Character set (1 byte)
-		g.CharacterSet, _ = r.ReadByte()
+		cs, err := r.ReadByte()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read character set: %w", err)
+		}
+		g.CharacterSet = cs
 
 		// Status flags (2 bytes)
-		binary.Read(r, binary.LittleEndian, &g.StatusFlags)
+		statusFlags, err := readUint16LE(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read status flags: %w", err)
+		}
+		g.StatusFlags = statusFlags
 
 		// Capability flags upper 2 bytes
-		var capUpper uint16
-		binary.Read(r, binary.LittleEndian, &capUpper)
+		capUpper, err := readUint16LE(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read upper capability flags: %w", err)
+		}
 		g.CapabilityFlags |= uint32(capUpper) << 16
 
 		// Auth plugin data length (1 byte) or 0x00
-		authDataLen, _ := r.ReadByte()
+		authDataLen, err := r.ReadByte()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read auth data length: %w", err)
+		}
 
 		// Reserved (10 bytes)
-		reserved := make([]byte, 10)
-		r.Read(reserved)
+		_, err = safeRead(r, 10)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read reserved bytes: %w", err)
+		}
 
 		// Auth plugin data part 2 (if protocol 41)
 		if g.CapabilityFlags&mysqlClientSecureConn != 0 {
@@ -281,8 +322,10 @@ func readMySQLGreeting(conn net.Conn, timeout time.Duration) (*mysqlGreeting, er
 			if int(authDataLen) > 8 {
 				part2Len = int(authDataLen) - 8
 			}
-			authData2 := make([]byte, part2Len)
-			r.Read(authData2)
+			authData2, err := safeRead(r, part2Len)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read auth data part 2: %w", err)
+			}
 
 			g.AuthPluginData = make([]byte, 8+part2Len)
 			copy(g.AuthPluginData, authData1)
@@ -300,7 +343,10 @@ func readMySQLGreeting(conn net.Conn, timeout time.Duration) (*mysqlGreeting, er
 			var pluginBuf bytes.Buffer
 			for {
 				b, err := r.ReadByte()
-				if err != nil || b == 0 {
+				if err != nil {
+					break
+				}
+				if b == 0 {
 					break
 				}
 				pluginBuf.WriteByte(b)
@@ -316,8 +362,11 @@ func readMySQLGreeting(conn net.Conn, timeout time.Duration) (*mysqlGreeting, er
 
 // readMySQLPacket reads a MySQL wire protocol packet (4 byte header + payload).
 func readMySQLPacket(conn net.Conn) ([]byte, error) {
-	header := make([]byte, 4)
-	if _, err := io.ReadFull(conn, header); err != nil {
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+	// Read 4-byte header
+	header, err := safeRead(conn, 4)
+	if err != nil {
 		return nil, fmt.Errorf("failed to read packet header: %w", err)
 	}
 
@@ -330,9 +379,9 @@ func readMySQLPacket(conn net.Conn) ([]byte, error) {
 		return nil, fmt.Errorf("packet too large: %d bytes", payloadLen)
 	}
 
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(conn, payload); err != nil {
-		return nil, fmt.Errorf("failed to read packet payload: %w", err)
+	payload, err := safeRead(conn, payloadLen)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read packet payload (%d bytes): %w", payloadLen, err)
 	}
 
 	return payload, nil
@@ -453,17 +502,43 @@ func parseMySQLError(pkt []byte) string {
 		return "unknown error"
 	}
 	// ERR packet: 0xFF + error code (2 bytes LE) + '#' + sqlstate (5 bytes) + message
-	errCode := binary.LittleEndian.Uint16(pkt[1:3])
-	msg := ""
-	offset := 3
-	if offset < len(pkt) && pkt[offset] == '#' {
-		// Skip SQL state marker and 5-byte state
-		offset += 6
+	r := bytes.NewReader(pkt)
+
+	// Skip ERR marker (1 byte)
+	r.ReadByte()
+
+	// Error code (2 bytes LE)
+	errCode, err := readUint16LE(r)
+	if err != nil {
+		return "unknown error (truncated error code)"
 	}
-	if offset < len(pkt) {
-		msg = string(pkt[offset:])
+
+	// Check for SQL state marker
+	marker, err := r.ReadByte()
+	if err != nil {
+		return fmt.Sprintf("error %d", errCode)
 	}
-	return fmt.Sprintf("error %d: %s", errCode, msg)
+	if marker == '#' {
+		// Skip 5-byte SQL state
+		_, err := safeRead(r, 5)
+		if err != nil {
+			return fmt.Sprintf("error %d (truncated SQL state)", errCode)
+		}
+	} else {
+		// Not a SQL state marker, unread and treat rest as message
+		r.UnreadByte()
+	}
+
+	// Read remaining bytes as message
+	remaining := r.Len()
+	if remaining > 0 {
+		msgBytes, err := safeRead(r, remaining)
+		if err != nil {
+			return fmt.Sprintf("error %d", errCode)
+		}
+		return fmt.Sprintf("error %d: %s", errCode, string(msgBytes))
+	}
+	return fmt.Sprintf("error %d", errCode)
 }
 
 // classifyMySQLAuthResponse classifies the MySQL auth response packet.

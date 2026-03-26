@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"time"
@@ -44,8 +43,18 @@ const (
 	tdsEncryptRequired  byte = 0x03
 )
 
-func (p *SQLServerProber) Probe(ctx context.Context, target ProbeTarget) []ProbeStep {
-	var steps []ProbeStep
+func (p *SQLServerProber) Probe(ctx context.Context, target ProbeTarget) (steps []ProbeStep) {
+	// Safety net: convert any remaining panic into a FAIL step.
+	defer func() {
+		if r := recover(); r != nil {
+			steps = append(steps, ProbeStep{
+				Layer:  "L7-Protocol",
+				Status: StatusFAIL,
+				Detail: fmt.Sprintf("protocol parser panic: %v", r),
+				Hint:   "Server sent malformed or unexpected response. This may not be a SQL Server.",
+			})
+		}
+	}()
 
 	// L3-DNS
 	dnsStep := ProbeDNS(target.Host)
@@ -264,9 +273,11 @@ func writeTDSPacket(pktType byte, payload []byte) []byte {
 
 // readTDSPacket reads a TDS packet and returns the packet type and payload.
 func readTDSPacket(conn net.Conn) (byte, []byte, error) {
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
 	// Read TDS header (8 bytes)
-	header := make([]byte, 8)
-	if _, err := io.ReadFull(conn, header); err != nil {
+	header, err := safeRead(conn, 8)
+	if err != nil {
 		return 0, nil, fmt.Errorf("failed to read TDS header: %w", err)
 	}
 
@@ -276,15 +287,18 @@ func readTDSPacket(conn net.Conn) (byte, []byte, error) {
 	if totalLen < 8 {
 		return 0, nil, fmt.Errorf("TDS packet too short: %d bytes", totalLen)
 	}
+	if totalLen > 32768 {
+		return 0, nil, fmt.Errorf("TDS packet too large: %d bytes", totalLen)
+	}
 
 	payloadLen := int(totalLen) - 8
 	if payloadLen == 0 {
 		return pktType, nil, nil
 	}
 
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(conn, payload); err != nil {
-		return 0, nil, fmt.Errorf("failed to read TDS payload: %w", err)
+	payload, err := safeRead(conn, payloadLen)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to read TDS payload (%d bytes): %w", payloadLen, err)
 	}
 
 	return pktType, payload, nil
@@ -303,21 +317,28 @@ func parseTDSPreLoginResponse(data []byte) (string, byte, error) {
 	}
 
 	var options []preLoginOption
-	pos := 0
+	r := bytes.NewReader(data)
 
-	// Parse option tokens
-	for pos < len(data) {
-		token := data[pos]
+	// Parse option tokens using buffered reader
+	for {
+		token, err := r.ReadByte()
+		if err != nil {
+			break
+		}
 		if token == tdsPreLoginTerminator {
 			break
 		}
-		if pos+5 > len(data) {
-			return "", 0, fmt.Errorf("truncated pre-login option at offset %d", pos)
+
+		optOffset, err := readUint16BE(r)
+		if err != nil {
+			return "", 0, fmt.Errorf("truncated pre-login option offset for token 0x%02X", token)
 		}
-		offset := binary.BigEndian.Uint16(data[pos+1 : pos+3])
-		length := binary.BigEndian.Uint16(data[pos+3 : pos+5])
-		options = append(options, preLoginOption{token: token, offset: offset, length: length})
-		pos += 5
+		optLength, err := readUint16BE(r)
+		if err != nil {
+			return "", 0, fmt.Errorf("truncated pre-login option length for token 0x%02X", token)
+		}
+
+		options = append(options, preLoginOption{token: token, offset: optOffset, length: optLength})
 	}
 
 	var version string
@@ -325,7 +346,8 @@ func parseTDSPreLoginResponse(data []byte) (string, byte, error) {
 
 	for _, opt := range options {
 		end := int(opt.offset) + int(opt.length)
-		if end > len(data) {
+		// Validate that offset+length fits within the data
+		if int(opt.offset) > len(data) || end > len(data) || int(opt.offset) < 0 {
 			continue
 		}
 		optData := data[opt.offset:end]
