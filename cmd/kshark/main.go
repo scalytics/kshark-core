@@ -422,6 +422,15 @@ func main() {
 |__|_ \/_______  /|___|  (____  /__|  |__|_ \
      \/        \/      \/     \/           \/
 `)
+	// Handle subcommands before flag parsing
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "doctor":
+			runDoctor()
+			return
+		}
+	}
+
 	propsPath := flag.String("props", "", "Path to client .properties")
 	topic := flag.String("topic", "", "Comma-separated list of topics to test (optional for metadata-only)")
 	group := flag.String("group", "", "Consumer group for probe (ephemeral by default)")
@@ -834,6 +843,46 @@ func main() {
 	}
 
 	if report.HasFailed {
-		os.Exit(1)
+		os.Exit(layeredExitCode(report))
 	}
+}
+
+// layeredExitCode returns an exit code encoding the lowest failing layer.
+// This enables CI/CD pipelines to branch based on the failure type:
+//
+//	1 = L3/DNS failure
+//	2 = L4/TCP failure
+//	3 = L5-6/TLS failure
+//	4 = L7/Application failure (Kafka, HTTP, connector)
+//	5 = Diagnostic failure only (timeout, MTU, etc.)
+//	1 = fallback if no specific layer detected
+func layeredExitCode(r *Report) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lowestLayer := 99
+	for _, row := range r.Rows {
+		if row.Status != FAIL {
+			continue
+		}
+		code := 5 // default: diagnostic
+		switch row.Layer {
+		case L3:
+			code = 1
+		case L4:
+			code = 2
+		case L56:
+			code = 3
+		case L7, HTTP:
+			code = 4
+		case DIAG:
+			code = 5
+		}
+		if code < lowestLayer {
+			lowestLayer = code
+		}
+	}
+	if lowestLayer == 99 {
+		return 1 // fallback
+	}
+	return lowestLayer
 }
