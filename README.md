@@ -914,12 +914,9 @@ For security concerns and vulnerability reports, please see [SECURITY.md](docs/S
 - [x] CI/CD pipeline (GitHub Actions, GoReleaser, SBOM, cosign signing)
 
 **Planned:**
-- [ ] Oracle, MySQL, SQL Server connector probes
-- [ ] Broker discovery scan (probe all advertised listeners)
-- [ ] Connector-specific neighborhood ports
-- [ ] Prometheus metrics export
-- [ ] OpenTelemetry integration
-- [ ] REST API mode
+- [ ] Redis, Elasticsearch connector probes
+- [ ] `--watch` mode (re-run scan on interval)
+- [ ] `kshark diff` (compare two scan results)
 - [ ] Historical trend analysis
 
 ---
