@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"strings"
 	"time"
@@ -29,8 +28,18 @@ const (
 	tnsPacketResend   byte = 11
 )
 
-func (p *OracleProber) Probe(ctx context.Context, target ProbeTarget) []ProbeStep {
-	var steps []ProbeStep
+func (p *OracleProber) Probe(ctx context.Context, target ProbeTarget) (steps []ProbeStep) {
+	// Safety net: convert any remaining panic into a FAIL step.
+	defer func() {
+		if r := recover(); r != nil {
+			steps = append(steps, ProbeStep{
+				Layer:  "L7-Protocol",
+				Status: StatusFAIL,
+				Detail: fmt.Sprintf("protocol parser panic: %v", r),
+				Hint:   "Server sent malformed or unexpected response. This may not be an Oracle server.",
+			})
+		}
+	}()
 
 	// L3-DNS
 	dnsStep := ProbeDNS(target.Host)
@@ -252,27 +261,37 @@ func buildTNSConnect(connectDescriptor string) []byte {
 
 // readTNSPacket reads a TNS packet and returns the packet type and data.
 func readTNSPacket(conn net.Conn) (byte, []byte, error) {
-	// Read TNS header (8 bytes)
-	header := make([]byte, 8)
-	if _, err := io.ReadFull(conn, header); err != nil {
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+	// Read TNS length header (2 bytes, big-endian)
+	totalLen, err := readUint16BE(conn)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to read TNS packet length: %w", err)
+	}
+
+	if totalLen < 8 {
+		return 0, nil, fmt.Errorf("TNS packet too short: %d bytes", totalLen)
+	}
+	if totalLen > 32768 {
+		return 0, nil, fmt.Errorf("TNS packet too large: %d bytes", totalLen)
+	}
+
+	// Read the remaining header bytes (6 bytes: checksum(2) + type(1) + reserved(1) + header_checksum(2))
+	restHeader, err := safeRead(conn, 6)
+	if err != nil {
 		return 0, nil, fmt.Errorf("failed to read TNS header: %w", err)
 	}
 
-	totalLen := binary.BigEndian.Uint16(header[0:2])
-	pktType := header[4]
-
-	if totalLen < 8 {
-		return pktType, nil, fmt.Errorf("TNS packet too short: %d bytes", totalLen)
-	}
+	pktType := restHeader[2] // type is at offset 2 within restHeader (offset 4 in full header)
 
 	payloadLen := int(totalLen) - 8
 	if payloadLen == 0 {
 		return pktType, nil, nil
 	}
 
-	payload := make([]byte, payloadLen)
-	if _, err := io.ReadFull(conn, payload); err != nil {
-		return 0, nil, fmt.Errorf("failed to read TNS payload: %w", err)
+	payload, err := safeRead(conn, payloadLen)
+	if err != nil {
+		return 0, nil, fmt.Errorf("failed to read TNS payload (%d bytes): %w", payloadLen, err)
 	}
 
 	return pktType, payload, nil
@@ -290,13 +309,38 @@ func parseTNSRefuseData(data []byte) string {
 		return fmt.Sprintf("refused (raw: %x)", data)
 	}
 
-	reasonUser := data[0]
-	reasonSystem := data[1]
-	dataLen := binary.BigEndian.Uint16(data[2:4])
+	r := bytes.NewReader(data)
+
+	reasonUser, err := r.ReadByte()
+	if err != nil {
+		return "connection refused (could not read reason)"
+	}
+
+	reasonSystem, err := r.ReadByte()
+	if err != nil {
+		return fmt.Sprintf("reason(user=%d)", reasonUser)
+	}
+
+	dataLen, err := readUint16BE(r)
+	if err != nil {
+		return fmt.Sprintf("reason(user=%d, system=%d)", reasonUser, reasonSystem)
+	}
 
 	var refuseData string
-	if int(dataLen) > 0 && len(data) >= 4+int(dataLen) {
-		refuseData = strings.TrimSpace(string(data[4 : 4+int(dataLen)]))
+	if dataLen > 0 {
+		// Validate length before reading
+		if int(dataLen) > r.Len() {
+			// Read whatever is available
+			remaining, _ := safeRead(r, r.Len())
+			if len(remaining) > 0 {
+				refuseData = strings.TrimSpace(string(remaining))
+			}
+		} else {
+			msgBytes, err := safeRead(r, int(dataLen))
+			if err == nil {
+				refuseData = strings.TrimSpace(string(msgBytes))
+			}
+		}
 	}
 
 	if refuseData != "" {
