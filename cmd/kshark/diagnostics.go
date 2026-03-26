@@ -91,9 +91,10 @@ func mtuCheck(r *Report, host string) {
 	}
 	// Linux tracepath usually reports pMTU; otherwise try ping DF
 	start := time.Now()
+	mtuHint := "MTU probe uses ICMP — results may differ from TCP on port 9092."
 	if out, err := runCmdIfExists("tracepath", host); err == nil && strings.Contains(out, "pmtu") {
 		slog.Debug("mtu tracepath ok", "host", host, "dur", time.Since(start).Truncate(time.Millisecond))
-		addRow(r, Row{"diag", host, DIAG, OK, "pMTU detected via tracepath", ""})
+		addRow(r, Row{"diag", host, DIAG, OK, "pMTU detected via tracepath", mtuHint})
 		return
 	}
 	slog.Debug("mtu tracepath skip", "host", host, "dur", time.Since(start).Truncate(time.Millisecond))
@@ -109,12 +110,43 @@ func mtuCheck(r *Report, host string) {
 		}
 		if err == nil && strings.Contains(strings.ToLower(out), "1 packets transmitted") {
 			slog.Debug("mtu ping ok", "host", host, "size", sz, "dur", time.Since(pingStart).Truncate(time.Millisecond))
-			addRow(r, Row{"diag", host, DIAG, OK, fmt.Sprintf("MTU ok at payload %d", sz), ""})
+			addRow(r, Row{"diag", host, DIAG, OK, fmt.Sprintf("MTU ok at payload %d", sz), mtuHint})
 			return
 		}
 		slog.Debug("mtu ping", "host", host, "size", sz, "dur", time.Since(pingStart).Truncate(time.Millisecond), "err", err)
 	}
-	addRow(r, Row{"diag", host, DIAG, SKIP, "MTU probe inconclusive", "Run tracepath or adjust network MTU if you see fragmentation."})
+	addRow(r, Row{"diag", host, DIAG, SKIP, "MTU probe inconclusive", "Run tracepath or adjust network MTU if you see fragmentation. " + mtuHint})
+}
+
+// mtuCorrelation cross-references MTU OK results with produce/consume timeout/fail
+// to detect possible PMTU black holes where ICMP works but large TCP payloads don't.
+func mtuCorrelation(r *Report) {
+	var mtuOK bool
+	var produceTimeout bool
+
+	// Safe to read without mutex: called after all goroutines have completed (diagWg.Wait).
+	for _, row := range r.Rows {
+		if row.Component == "diag" && strings.HasPrefix(row.Detail, "MTU ok") && row.Status == OK {
+			mtuOK = true
+		}
+		if row.Component == "kafka" && row.Layer == L7 && row.Status == FAIL {
+			detail := strings.ToLower(row.Detail)
+			if strings.Contains(detail, "timeout") || strings.Contains(detail, "timed out") {
+				produceTimeout = true
+			}
+		}
+		if row.Component == "kshark" && row.Detail == "Global timeout reached before produce/consume" {
+			produceTimeout = true
+		}
+	}
+
+	if mtuOK && produceTimeout {
+		addRow(r, Row{
+			"diag", "pmtu-correlation", DIAG, WARN,
+			"PMTU black hole suspected: ICMP MTU probe OK, but Kafka produce/consume timed out",
+			"ICMP and TCP may follow different filtering rules. Check intermediate firewalls for ICMP 'Fragmentation Needed' blocking.",
+		})
+	}
 }
 
 func trimLines(s string, n int) string {

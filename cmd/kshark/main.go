@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -50,6 +51,9 @@ type scanConfig struct {
 	connectorName  string
 	connectorCfg   string
 	connectAuth    connectapi.ConnectAuthOpts
+	probeDirection string // "up" (default, fail-fast) or "full" (all layers)
+	neighborhood   bool   // run port neighborhood scan on TCP failure
+	neighborPorts  string // comma-separated custom port list for neighborhood scan
 }
 
 var (
@@ -174,6 +178,11 @@ func printScanPlan(props map[string]string, topics []string, diag bool, analyze 
 // runScan executes all connectivity checks: broker probes, produce/consume,
 // schema registry, connector probe, and REST proxy. Returns early on timeout.
 func runScan(ctx context.Context, report *Report, cfg scanConfig) {
+	fullMode := cfg.probeDirection == "full"
+
+	// Collect hosts for parallel diagnostics
+	var diagHosts []string
+
 	// Per-broker checks (skip if no bootstrap.servers, i.e. connector-only mode)
 	brokers := strings.Split(cfg.bootstrap, ",")
 	if cfg.bootstrap == "" {
@@ -194,41 +203,75 @@ func runScan(ctx context.Context, report *Report, cfg scanConfig) {
 			continue
 		}
 		slog.Debug("broker check start", "host", host, "port", port)
+
+		if cfg.diag {
+			diagHosts = append(diagHosts, host)
+		}
+
 		checkDNS(report, host, "kafka")
 		addr := net.JoinHostPort(host, port)
 		conn := checkTCP(report, addr, "kafka", 8*time.Second)
 		if conn == nil {
 			slog.Debug("broker check failed tcp", "addr", addr)
+			// Trigger neighborhood scan on TCP failure
+			if cfg.diag || cfg.neighborhood {
+				portInt, _ := strconv.Atoi(port)
+				runNeighborhoodScan(report, host, portInt, cfg.neighborPorts, 5*time.Second)
+			}
+			if !fullMode {
+				continue
+			}
+			// In full mode, skip TLS/Kafka (no socket) but continue to next broker
 			continue
 		}
 		tlsConf, _, err := tlsConfigFromProps(cfg.props, host)
 		if err != nil {
 			addRow(report, Row{"kafka", addr, L56, FAIL, fmt.Sprintf("TLS config err: %v", err), ""})
 			_ = conn.Close()
-			continue
-		}
-		var secured net.Conn = conn
-		if tlsConf != nil {
-			secured = wrapTLS(report, conn, tlsConf, "kafka", addr)
-			if secured == nil {
-				slog.Debug("broker check failed tls", "addr", addr)
+			if !fullMode {
 				continue
 			}
-		} else {
-			addRow(report, Row{"kafka", addr, L56, SKIP, "PLAINTEXT (no TLS)", "Prefer SSL/SASL_SSL."})
+			// In full mode: TLS failed, but still try L7 topic checks (they'll likely fail too,
+			// but the error messages are diagnostic)
 		}
-		_ = secured.Close()
-		slog.Debug("broker check ok", "addr", addr)
+		var secured net.Conn = conn
+		var tlsOK bool
+		if err == nil {
+			if tlsConf != nil {
+				secured = wrapTLS(report, conn, tlsConf, "kafka", addr)
+				if secured == nil {
+					slog.Debug("broker check failed tls", "addr", addr)
+					if !fullMode {
+						continue
+					}
+					// In full mode: TLS failed, still attempt L7 topic checks below
+				} else {
+					tlsOK = true
+				}
+			} else {
+				addRow(report, Row{"kafka", addr, L56, SKIP, "PLAINTEXT (no TLS)", "Prefer SSL/SASL_SSL."})
+				tlsOK = true
+			}
+		}
+		if secured != nil {
+			_ = secured.Close()
+		} else if conn != nil {
+			_ = conn.Close()
+		}
 
-		for _, t := range cfg.topics {
-			slog.Debug("topic metadata check", "topic", t, "broker", addr)
-			checkTopic(report, cfg.props, addr, t, cfg.kafkaTimeout)
+		if tlsOK || fullMode {
+			slog.Debug("broker check proceeding to L7", "addr", addr, "tlsOK", tlsOK, "fullMode", fullMode)
+			for _, t := range cfg.topics {
+				slog.Debug("topic metadata check", "topic", t, "broker", addr)
+				checkTopic(report, cfg.props, addr, t, cfg.kafkaTimeout)
+			}
 		}
+	}
 
-		if cfg.diag {
-			bestEffortTraceroute(report, host)
-			mtuCheck(report, host)
-		}
+	// Run diagnostics in parallel (non-blocking)
+	var diagWg sync.WaitGroup
+	if len(diagHosts) > 0 {
+		runDiagnosticsParallel(ctx, report, diagHosts, &diagWg)
 	}
 
 	// Produce/Consume
@@ -236,6 +279,7 @@ func runScan(ctx context.Context, report *Report, cfg scanConfig) {
 		select {
 		case <-ctx.Done():
 			addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before produce/consume", ""})
+			diagWg.Wait()
 			return
 		default:
 			slog.Debug("produce/consume start", "topic", t, "group", cfg.group)
@@ -248,6 +292,7 @@ func runScan(ctx context.Context, report *Report, cfg scanConfig) {
 	select {
 	case <-ctx.Done():
 		addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before schema registry check", ""})
+		diagWg.Wait()
 		return
 	default:
 		slog.Debug("schema registry check start")
@@ -258,6 +303,7 @@ func runScan(ctx context.Context, report *Report, cfg scanConfig) {
 	select {
 	case <-ctx.Done():
 		addRow(report, Row{"kshark", "timeout", DIAG, FAIL, "Global timeout reached before connector probe", ""})
+		diagWg.Wait()
 		return
 	default:
 		runConnectorProbe(ctx, report, cfg.connectURL, cfg.connectorName, cfg.connectorCfg, cfg.connectAuth)
@@ -265,6 +311,46 @@ func runScan(ctx context.Context, report *Report, cfg scanConfig) {
 
 	// REST Proxy
 	checkRESTProxy(ctx, report, cfg.props)
+
+	// Wait for parallel diagnostics to finish
+	diagWg.Wait()
+
+	// Cross-reference MTU results with produce/consume results
+	mtuCorrelation(report)
+
+	// Run forced neighborhood scan if --neighborhood flag is set (even on success)
+	if cfg.neighborhood {
+		for _, b := range brokers {
+			b = strings.TrimSpace(b)
+			host, port, err := net.SplitHostPort(b)
+			if err != nil {
+				continue
+			}
+			portInt, _ := strconv.Atoi(port)
+			// Only scan if we haven't already (triggered on failure above)
+			if !hasNeighborhoodRows(report, host) {
+				runNeighborhoodScan(report, host, portInt, cfg.neighborPorts, 5*time.Second)
+			}
+		}
+	}
+}
+
+// runDiagnosticsParallel runs traceroute and MTU checks concurrently for all hosts.
+func runDiagnosticsParallel(ctx context.Context, report *Report, hosts []string, wg *sync.WaitGroup) {
+	for _, host := range hosts {
+		h := host
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			bestEffortTraceroute(report, h)
+			mtuCheck(report, h)
+		}()
+	}
 }
 
 // checkRESTProxy validates and probes a REST Proxy endpoint if configured.
@@ -347,6 +433,9 @@ func main() {
 	startOffset := flag.String("start-offset", "earliest", "Probe read start offset: earliest|latest")
 	preset := flag.String("preset", "", "Preset: cc-plain|self-scram")
 	diag := flag.Bool("diag", true, "Run traceroute/MTU diagnostics if tools are available")
+	probeDirection := flag.String("probe-direction", "up", "Probe direction: up (bottom-up, fail-fast) | full (all layers)")
+	neighborhood := flag.Bool("neighborhood", false, "Run port neighborhood scan on TCP failures (auto-enabled on failure when -diag is true)")
+	neighborPorts := flag.String("neighborhood-ports", "", "Comma-separated list of ports for neighborhood scan (default: 80,443,9092,9093,9094,8081,8083)")
 	logPath := flag.String("log", "", "Write detailed scan log to file (default: reports/kshark-<timestamp>.log)")
 	logFormat := flag.String("log-format", "text", "Log output format: text|json")
 	yes := flag.Bool("y", false, "Skip interactive confirmation and proceed with the scan")
@@ -358,6 +447,10 @@ func main() {
 	connectAuth := flag.String("connect-basic-auth", "", "user:pass for Connect REST API basic auth (or set KSHARK_CONNECT_AUTH env var)")
 	connectBearer := flag.String("connect-bearer-token", "", "Bearer token for Connect REST API auth (or set KSHARK_CONNECT_TOKEN env var)")
 	connectCACert := flag.String("connect-ca-cert", "", "CA cert PEM for Connect REST API TLS")
+	// Diagnostics bundle flags
+	bundle := flag.String("bundle", "", "Create diagnostics bundle (.tar.gz). Optional: specify output path.")
+	tfState := flag.String("tf-state", "", "Path to Terraform state file to include in bundle (redacted)")
+	tfPlan := flag.String("tf-plan", "", "Path to Terraform plan output to include in bundle (redacted)")
 	flag.Parse()
 
 	// Environment variable fallback for credentials (avoids credentials in shell history)
@@ -375,6 +468,14 @@ func main() {
 	flag.CommandLine.Visit(func(f *flag.Flag) {
 		providedFlags[f.Name] = true
 	})
+
+	switch *probeDirection {
+	case "up", "full":
+		// valid
+	default:
+		fmt.Fprintf(os.Stderr, "Invalid -probe-direction value %q: must be 'up' or 'full'\n", *probeDirection)
+		os.Exit(2)
+	}
 
 	if *showVersion {
 		fmt.Printf("kshark version %s (commit %s, built %s)\n", version, commit, date)
@@ -478,6 +579,8 @@ func main() {
 			"balancer":        paramMeta(*balancer, "least", providedFlags["balancer"]),
 			"preset":          paramMeta(*preset, "", providedFlags["preset"]),
 			"diag":            paramMeta(strconv.FormatBool(*diag), "true", providedFlags["diag"]),
+			"probe-direction": paramMeta(*probeDirection, "up", providedFlags["probe-direction"]),
+			"neighborhood":    paramMeta(strconv.FormatBool(*neighborhood), "false", providedFlags["neighborhood"]),
 			"log":             paramMeta(*logPath, "", providedFlags["log"]),
 			"log-format":      paramMeta(*logFormat, "text", providedFlags["log-format"]),
 			"y":               paramMeta(strconv.FormatBool(*yes), "false", providedFlags["y"]),
@@ -550,6 +653,9 @@ func main() {
 			BearerToken: *connectBearer,
 			CACertPath:  *connectCACert,
 		},
+		probeDirection: *probeDirection,
+		neighborhood:   *neighborhood,
+		neighborPorts:  *neighborPorts,
 	})
 
 	// Stop scan animation if it was started
@@ -705,6 +811,20 @@ func main() {
 		} else {
 			fmt.Printf("JSON report checksum saved to %s\n", checksumPath)
 			slog.Debug("report checksum", "path", checksumPath, "sha256", checksum)
+		}
+	}
+
+	// Create diagnostics bundle if requested
+	if *bundle != "" || *tfState != "" {
+		bundleOut := *bundle
+		if bundleOut == "" {
+			bundleOut = "" // createBundle will generate a default name
+		}
+		bundlePath, err := createBundle(report, *logPath, *jsonOut, *tfState, *tfPlan, bundleOut)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating diagnostics bundle: %v\n", err)
+		} else {
+			printExportCommands(bundlePath)
 		}
 	}
 
