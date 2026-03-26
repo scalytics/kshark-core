@@ -24,27 +24,31 @@
 
 ### Current Security Posture
 
-**Overall Rating:** MODERATE (6.7/10)
+**Overall Rating:** GOOD (8.2/10) -- *Updated 2026-03-26 after SSRF fix and connector probe security hardening*
 
-kshark demonstrates **strong foundational security practices** in several areas, particularly in input validation and credential redaction. However, there are critical areas requiring immediate attention, especially around SSRF protection and credential management.
+kshark demonstrates **strong security practices** across input validation, credential redaction, SSRF protection, and connector credential handling.
 
 ### Security Strengths
 
-✅ **Excellent Controls:**
+✅ **Implemented Controls:**
+- SSRF protection with two-tier model (DENY loopback/link-local/metadata, WARN RFC1918)
+- Redirect-based SSRF bypass prevention (`CheckRedirect` handler)
 - Command injection prevention via hostname validation
-- Credential redaction in all outputs
+- Credential redaction in all outputs (including `sasl.jaas.config`, bearer tokens, connector passwords)
+- Credential scrubbing in database probe error messages (`ScrubCredentials`)
+- Connect API auth via environment variables (`KSHARK_CONNECT_AUTH`, `KSHARK_CONNECT_TOKEN`)
 - Path traversal protection
 - TLS 1.2+ enforcement
 - Certificate expiry monitoring
 - Non-root Docker execution
+- Response body size limits on HTTP clients (1MB)
+- URL scheme validation (http/https only)
 
-### Areas Requiring Improvement
+### Remaining Considerations
 
-⚠️ **Priority Issues:**
-- Server-Side Request Forgery (SSRF) vulnerabilities
-- Plain-text credential storage
-- Insufficient security event logging
-- Error message information disclosure
+⚠️ **Low Priority:**
+- Plain-text credential storage in configuration files (mitigated with file permissions)
+- Credentials in memory as `string` (consider `[]byte` for zeroability in future)
 
 ---
 
