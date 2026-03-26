@@ -46,6 +46,8 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 - [Installation](#installation)
 - [Usage](#usage)
 - [Connector Probe](#connector-probe)
+- [Neighborhood Scan & Restriction Detection](#neighborhood-scan--restriction-detection)
+- [Diagnostics Bundle](#diagnostics-bundle)
 - [Configuration](#configuration)
 - [Integration Testbed](#integration-testbed)
 - [Documentation](#documentation)
@@ -66,9 +68,14 @@ When an agent needs to validate a client configuration, diagnose a connection fa
     -   **L7 (Application):** Kafka protocol, metadata retrieval, topic visibility
     -   **L7 (HTTP):** Schema Registry and REST Proxy connectivity
     -   **L7 (Connector Targets):** MongoDB, PostgreSQL, DB2 connectivity via Kafka Connect config
-    -   **Diagnostics:** Traceroute, MTU discovery, network path analysis
+    -   **Diagnostics:** Traceroute, MTU discovery, PMTU black hole detection
+    -   **Neighborhood Scan:** Port-level and protocol-level restriction detection
 
 -   **End-to-End Testing:** Full produce-and-consume loop validation to verify complete data flow
+
+-   **Network Restriction Detection:** When TCP fails, automatically scans nearby ports (80, 443, 9092-9094) and compares ICMP vs TCP reachability to classify firewall/NSG restrictions
+
+-   **Diagnostics Bundle:** Package reports, logs, redacted Terraform state, and system context into a portable `.tar.gz` with ready-to-use export commands (scp, docker cp, kubectl cp)
 
 -   **Multiple Authentication Methods:**
     -   SASL/PLAIN
@@ -105,8 +112,10 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 -   **CI/CD Integration:** Automated releases via GitHub Actions + GoReleaser
 -   **Security-Focused:**
     -   Credential redaction in reports
+    -   Terraform state redaction (passwords, API keys, secrets, Confluent Cloud keys)
     -   Command injection prevention
     -   TLS 1.2+ enforcement
+    -   Thread-safe concurrent diagnostics
     -   Non-root container execution
 
 ---
@@ -269,6 +278,16 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 # Select partition balancer for probes
 ./kshark -props client.properties -topic my-topic -balancer rr
 
+# Run all layers regardless of failures (full diagnostic mode)
+./kshark -props client.properties -topic orders -probe-direction=full
+
+# Force neighborhood port scan (even on success)
+./kshark -props client.properties -topic orders -neighborhood
+
+# Create diagnostics bundle with Terraform state
+./kshark -props client.properties -topic orders \
+    -bundle -tf-state=terraform.tfstate
+
 # Generate HTML report
 ./kshark -props client.properties -topic my-topic
 # Report saved to: reports/analysis_report_<hostname>_<timestamp>.html
@@ -313,6 +332,12 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 | `-start-offset` | Probe read start offset (`earliest|latest`) | `earliest` | `-start-offset latest` |
 | `-balancer` | Probe partition balancer (`least|rr|random`) | `least` | `-balancer rr` |
 | `-diag` | Enable traceroute/MTU diagnostics | true | `-diag=false` |
+| `-probe-direction` | Probe direction: `up` (fail-fast) or `full` (all layers) | `up` | `-probe-direction=full` |
+| `-neighborhood` | Force port neighborhood scan (auto on TCP failure) | false | `-neighborhood` |
+| `-neighborhood-ports` | Custom ports for neighborhood scan | `80,443,9092,...` | `-neighborhood-ports=443,9092,5432` |
+| `-bundle` | Create diagnostics bundle (.tar.gz) | (none) | `-bundle` or `-bundle=out.tar.gz` |
+| `-tf-state` | Terraform state file for bundle (redacted) | (none) | `-tf-state=terraform.tfstate` |
+| `-tf-plan` | Terraform plan output for bundle (redacted) | (none) | `-tf-plan=plan.txt` |
 | `-log` | Write detailed scan log to file | auto | `-log /tmp/kshark.log` |
 | `--analyze` | Enable AI analysis | false | `--analyze` |
 | `-no-ai` | Skip AI analysis even if enabled | false | `-no-ai` |
@@ -388,6 +413,115 @@ Avoid putting credentials in shell history:
 export KSHARK_CONNECT_AUTH="admin:secret"    # instead of --connect-basic-auth
 export KSHARK_CONNECT_TOKEN="eyJhbG..."      # instead of --connect-bearer-token
 ```
+
+---
+
+## Neighborhood Scan & Restriction Detection
+
+When TCP connectivity to a Kafka port fails, kshark automatically probes nearby ports and protocols to classify the type of network restriction.
+
+### How It Works
+
+```
+TCP FAIL on port 9092
+  ├─ Port Scan: 80, 443, 9092, 9093, 9094, 8081, 8083
+  ├─ ICMP Check: ping host
+  └─ Classification: selective_port_filtering / host_unreachable / ...
+```
+
+### Example Output
+
+```
+❌  kafka          host.cloud:9092       L4-TCP   TCP connect failed: timeout
+⚠️  neighborhood   host.cloud            Diag     Port scan: 80=OPEN, 443=OPEN, 9092=BLOCKED, 9093=BLOCKED | ICMP: OPEN (8ms)
+    ↳ Hint: selective_port_filtering [confidence: high] Open TCP ports 9092-9094 in firewall/NSG/Security Group.
+```
+
+### Restriction Classifications
+
+| Pattern | Classification | Confidence |
+|---------|---------------|------------|
+| Kafka ports blocked, 443 open | `selective_port_filtering` | high |
+| All ports + ICMP blocked | `host_unreachable` | high |
+| All TCP blocked, ICMP open | `all_tcp_blocked` | high |
+| Connection refused (not timeout) | `service_not_listening` | high |
+| All ports open | `no_network_restriction` | high |
+
+### Usage
+
+```bash
+# Auto-triggered on TCP failure (default when -diag=true)
+./kshark -props client.properties -topic orders
+
+# Force neighborhood scan even on success (audit mode)
+./kshark -props client.properties -topic orders -neighborhood
+
+# Custom port list
+./kshark -props client.properties -neighborhood -neighborhood-ports=443,9092,5432
+```
+
+---
+
+## Diagnostics Bundle
+
+Package all diagnostic artifacts into a portable `.tar.gz` archive for sharing with support teams.
+
+### Bundle Contents
+
+```
+kshark-diag-<hostname>-<timestamp>/
+├── report.json                      # Full kshark report
+├── kshark.log                       # Run log
+├── config/client.properties.redacted
+├── terraform/
+│   ├── terraform.tfstate.redacted   # Secrets → [REDACTED]
+│   └── terraform-plan.txt           # If --tf-plan used
+├── context/
+│   ├── os.txt, arch.txt, hostname.txt
+│   ├── resolv.conf.txt              # DNS config
+│   ├── interfaces.txt               # Network interfaces
+│   └── routes.txt                   # Routing table
+└── MANIFEST.md                      # SHA256 checksums
+```
+
+### Usage
+
+```bash
+# Basic bundle (report + logs + configs + system context)
+./kshark -props client.properties -topic orders -y -bundle
+
+# Bundle with Terraform state (auto-redacted)
+./kshark -props client.properties -topic orders -y \
+    -bundle -tf-state=terraform.tfstate
+
+# Custom output path
+./kshark -props client.properties -y \
+    -bundle=/tmp/diag.tar.gz -tf-state=terraform.tfstate -tf-plan=plan.txt
+```
+
+After the scan, kshark prints export commands based on your environment:
+
+```
+Diagnostics bundle created: ./kshark-diag-bastion01-20260326-140000.tar.gz
+
+Export commands:
+  # SCP to local machine:
+  scp user@bastion01:/path/to/kshark-diag-bastion01-20260326-140000.tar.gz .
+
+  # Docker copy from container:
+  docker cp <container>:/path/to/kshark-diag-bastion01-20260326-140000.tar.gz .
+
+  # Kubectl copy from pod:
+  kubectl cp <namespace>/<pod>:/path/to/kshark-diag-bastion01-20260326-140000.tar.gz ./kshark-diag.tar.gz
+```
+
+### Terraform State Redaction
+
+All sensitive values are automatically redacted:
+- Passwords, secrets, API keys, tokens
+- Private keys, certificates
+- Connection strings (userinfo portion)
+- Confluent Cloud-specific keys (`kafka_api_key`, `schema_registry_api_secret`, etc.)
 
 ---
 
@@ -528,7 +662,16 @@ kshark uses a layered testing approach to systematically validate connectivity:
 ┌─────────────────────────────────────────┐
 │  Diagnostics                            │
 │  • Traceroute / Path Analysis           │
-│  • MTU Discovery                        │
+│  • MTU Discovery + PMTU Correlation     │
+│  • Neighborhood Scan (on TCP failure)   │
+│  • Restriction Classification           │
+└─────────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────┐
+│  Diagnostics Bundle (optional)          │
+│  • Redacted Terraform State             │
+│  • System Context (DNS, routes, IPs)    │
+│  • Export: scp / docker cp / kubectl cp │
 └─────────────────────────────────────────┘
 ```
 
@@ -540,9 +683,21 @@ For detailed architecture information, see [ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 ```
 kshark-core/
-├── cmd/kshark/            # Main application + SSRF protection
-│   ├── main.go            # Main application (~2500 lines)
-│   └── ssrf_test.go       # SSRF protection tests
+├── cmd/kshark/            # Main application (14 focused source files)
+│   ├── main.go            # Entry point, CLI flags, scan orchestration
+│   ├── ai.go              # AI analysis prompt building + API client
+│   ├── auth.go            # SASL authentication (PLAIN, SCRAM, JAAS)
+│   ├── bundle.go          # Diagnostics bundle, Terraform redaction
+│   ├── connector.go       # Connector probe orchestration
+│   ├── diagnostics.go     # Traceroute, MTU, PMTU correlation
+│   ├── httpcheck.go       # Schema Registry, REST Proxy checks
+│   ├── kafka.go           # Kafka dialer, metadata, produce/consume
+│   ├── neighborhood.go    # Port neighborhood scan, restriction classification
+│   ├── properties.go      # Properties file loading, presets
+│   ├── report.go          # Report model, JSON/HTML output
+│   ├── ssrf.go            # SSRF two-tier protection
+│   ├── tls.go             # TLS config, certificate validation
+│   └── util.go            # Shared helpers, logging, redaction
 ├── internal/              # Internal packages
 │   ├── probe/             # Database probing engine
 │   │   ├── types.go       # ProbeTarget, ProbeStep, Prober interface
@@ -745,16 +900,23 @@ For security concerns and vulnerability reports, please see [SECURITY.md](docs/S
 ## Roadmap
 
 **Completed:**
-- [x] Modular architecture (internal packages)
+- [x] Modular architecture (14 focused source files, internal packages)
 - [x] Connector target probing (MongoDB, DB2, PostgreSQL)
 - [x] SSRF protection (two-tier model)
 - [x] Enhanced AI analysis prompt (layered reasoning, confidence, severity)
 - [x] Integration testbed (Docker Compose, 10 automated tests)
 - [x] Credential redaction hardening (sasl.jaas.config, bearer tokens)
+- [x] Probe direction control (`--probe-direction=up|full`)
+- [x] Neighborhood scan — port-level restriction detection with classification
+- [x] PMTU black hole correlation (ICMP vs TCP cross-reference)
+- [x] Diagnostics bundle with Terraform state redaction
+- [x] Thread-safe concurrent diagnostics (parallel traceroute/MTU)
+- [x] CI/CD pipeline (GitHub Actions, GoReleaser, SBOM, cosign signing)
 
 **Planned:**
 - [ ] Oracle, MySQL, SQL Server connector probes
-- [ ] Concurrency for multi-broker checks
+- [ ] Broker discovery scan (probe all advertised listeners)
+- [ ] Connector-specific neighborhood ports
 - [ ] Prometheus metrics export
 - [ ] OpenTelemetry integration
 - [ ] REST API mode
@@ -767,7 +929,7 @@ For security concerns and vulnerability reports, please see [SECURITY.md](docs/S
 This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for complete details.
 
 ```
-Copyright 2025 kshark Contributors
+Copyright 2024-2026 Scalytics GmbH and kshark Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
