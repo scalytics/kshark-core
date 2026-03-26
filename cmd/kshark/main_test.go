@@ -506,3 +506,146 @@ func TestAIAPIIntegration_FullRoundTrip(t *testing.T) {
 		t.Errorf("Confidence = %q, want %q", result.Confidence, "high")
 	}
 }
+
+// ---------- layeredExitCode tests ----------
+
+func TestLayeredExitCode_L3Failure(t *testing.T) {
+	r := &Report{
+		Rows: []Row{
+			{Component: "dns", Target: "broker", Layer: L3, Status: FAIL, Detail: "DNS failed"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 1 {
+		t.Errorf("layeredExitCode() = %d, want 1 (L3)", got)
+	}
+}
+
+func TestLayeredExitCode_L4Failure(t *testing.T) {
+	r := &Report{
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: FAIL, Detail: "TCP timeout"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 2 {
+		t.Errorf("layeredExitCode() = %d, want 2 (L4)", got)
+	}
+}
+
+func TestLayeredExitCode_TLSFailure(t *testing.T) {
+	r := &Report{
+		Rows: []Row{
+			{Component: "tls", Target: "broker:9092", Layer: L56, Status: FAIL, Detail: "cert expired"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 3 {
+		t.Errorf("layeredExitCode() = %d, want 3 (L56/TLS)", got)
+	}
+}
+
+func TestLayeredExitCode_L7Failure(t *testing.T) {
+	r := &Report{
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L7, Status: FAIL, Detail: "auth failed"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 4 {
+		t.Errorf("layeredExitCode() = %d, want 4 (L7)", got)
+	}
+}
+
+func TestLayeredExitCode_DiagFailure(t *testing.T) {
+	r := &Report{
+		Rows: []Row{
+			{Component: "diag", Target: "traceroute", Layer: DIAG, Status: FAIL, Detail: "no route"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 5 {
+		t.Errorf("layeredExitCode() = %d, want 5 (DIAG)", got)
+	}
+}
+
+func TestLayeredExitCode_MultipleFailures(t *testing.T) {
+	// L4 FAIL + L7 FAIL => lowest layer code wins (L4 = 2)
+	r := &Report{
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L7, Status: FAIL, Detail: "auth failed"},
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: FAIL, Detail: "TCP timeout"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 2 {
+		t.Errorf("layeredExitCode() = %d, want 2 (lowest layer L4 wins)", got)
+	}
+}
+
+func TestLayeredExitCode_NoFailures(t *testing.T) {
+	// All OK rows => fallback exit code 1
+	r := &Report{
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L7, Status: OK, Detail: "ok"},
+			{Component: "dns", Target: "broker", Layer: L3, Status: OK, Detail: "resolved"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 1 {
+		t.Errorf("layeredExitCode() = %d, want 1 (fallback for no failures)", got)
+	}
+}
+
+func TestLayeredExitCode_HTTPFailure(t *testing.T) {
+	r := &Report{
+		Rows: []Row{
+			{Component: "rest", Target: "proxy:8082", Layer: HTTP, Status: FAIL, Detail: "HTTP 500"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 4 {
+		t.Errorf("layeredExitCode() = %d, want 4 (HTTP maps to same code as L7)", got)
+	}
+}
+
+func TestLayeredExitCode_AllLayerFailures(t *testing.T) {
+	// All layers fail => L3 (code 1) wins as the lowest
+	r := &Report{
+		Rows: []Row{
+			{Component: "diag", Target: "trace", Layer: DIAG, Status: FAIL, Detail: "fail"},
+			{Component: "kafka", Target: "broker:9092", Layer: L7, Status: FAIL, Detail: "fail"},
+			{Component: "tls", Target: "broker:9092", Layer: L56, Status: FAIL, Detail: "fail"},
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: FAIL, Detail: "fail"},
+			{Component: "dns", Target: "broker", Layer: L3, Status: FAIL, Detail: "fail"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 1 {
+		t.Errorf("layeredExitCode() = %d, want 1 (L3 is lowest layer)", got)
+	}
+}
+
+func TestLayeredExitCode_MixedStatuses(t *testing.T) {
+	// Only FAIL rows count; OK, WARN, SKIP should be ignored
+	r := &Report{
+		Rows: []Row{
+			{Component: "dns", Target: "broker", Layer: L3, Status: OK, Detail: "resolved"},
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: WARN, Detail: "slow"},
+			{Component: "tls", Target: "broker:9092", Layer: L56, Status: SKIP, Detail: "skipped"},
+			{Component: "diag", Target: "trace", Layer: DIAG, Status: FAIL, Detail: "no route"},
+		},
+	}
+	got := layeredExitCode(r)
+	if got != 5 {
+		t.Errorf("layeredExitCode() = %d, want 5 (only DIAG has FAIL)", got)
+	}
+}
+
+func TestLayeredExitCode_EmptyReport(t *testing.T) {
+	r := &Report{}
+	got := layeredExitCode(r)
+	if got != 1 {
+		t.Errorf("layeredExitCode() = %d, want 1 (fallback for empty report)", got)
+	}
+}
