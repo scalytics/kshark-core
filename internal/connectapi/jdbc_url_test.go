@@ -172,3 +172,181 @@ func TestParseJDBCURL_NotJDBC(t *testing.T) {
 		t.Fatal("expected error for non-JDBC URL")
 	}
 }
+
+func TestParseJDBCURL_SQLServer(t *testing.T) {
+	tests := []struct {
+		name      string
+		url       string
+		wantHost  string
+		wantPort  int
+		wantDB    string
+		wantProps map[string]string
+		wantErr   bool
+	}{
+		{
+			name:     "full URL with encrypt",
+			url:      "jdbc:sqlserver://host:1433;databaseName=mydb;encrypt=true",
+			wantHost: "host",
+			wantPort: 1433,
+			wantDB:   "mydb",
+			wantProps: map[string]string{
+				"encrypt":      "true",
+				"databaseName": "mydb",
+			},
+		},
+		{
+			name:     "default port",
+			url:      "jdbc:sqlserver://host;databaseName=mydb",
+			wantHost: "host",
+			wantPort: 1433,
+			wantDB:   "mydb",
+			wantProps: map[string]string{
+				"databaseName": "mydb",
+			},
+		},
+		{
+			name:      "host only",
+			url:       "jdbc:sqlserver://sqlhost",
+			wantHost:  "sqlhost",
+			wantPort:  1433,
+			wantDB:    "",
+			wantProps: map[string]string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseJDBCURL(tt.url)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if parsed.Dialect != "sqlserver" {
+				t.Errorf("dialect = %q, want sqlserver", parsed.Dialect)
+			}
+			if parsed.Host != tt.wantHost {
+				t.Errorf("host = %q, want %q", parsed.Host, tt.wantHost)
+			}
+			if parsed.Port != tt.wantPort {
+				t.Errorf("port = %d, want %d", parsed.Port, tt.wantPort)
+			}
+			if parsed.Database != tt.wantDB {
+				t.Errorf("database = %q, want %q", parsed.Database, tt.wantDB)
+			}
+			for k, v := range tt.wantProps {
+				if parsed.Props[k] != v {
+					t.Errorf("prop %q = %q, want %q", k, parsed.Props[k], v)
+				}
+			}
+		})
+	}
+}
+
+func TestParseJDBCURL_Oracle(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		wantHost string
+		wantPort int
+		wantDB   string
+	}{
+		{
+			name:     "service name format",
+			url:      "jdbc:oracle:thin:@host:1521/ORCL",
+			wantHost: "host",
+			wantPort: 1521,
+			wantDB:   "ORCL",
+		},
+		{
+			name:     "SID format",
+			url:      "jdbc:oracle:thin:@host:1521:ORCL",
+			wantHost: "host",
+			wantPort: 1521,
+			wantDB:   "ORCL",
+		},
+		{
+			name:     "double slash format",
+			url:      "jdbc:oracle:thin:@//host:1521/ORCL",
+			wantHost: "host",
+			wantPort: 1521,
+			wantDB:   "ORCL",
+		},
+		{
+			name:     "default port with service name",
+			url:      "jdbc:oracle:thin:@host/ORCL",
+			wantHost: "host",
+			wantPort: 1521,
+			wantDB:   "ORCL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed, err := ParseJDBCURL(tt.url)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if parsed.Dialect != "oracle" {
+				t.Errorf("dialect = %q, want oracle", parsed.Dialect)
+			}
+			if parsed.Host != tt.wantHost {
+				t.Errorf("host = %q, want %q", parsed.Host, tt.wantHost)
+			}
+			if parsed.Port != tt.wantPort {
+				t.Errorf("port = %d, want %d", parsed.Port, tt.wantPort)
+			}
+			if parsed.Database != tt.wantDB {
+				t.Errorf("database = %q, want %q", parsed.Database, tt.wantDB)
+			}
+		})
+	}
+}
+
+func TestParseJDBCURL_MySQL_WithParams(t *testing.T) {
+	parsed, err := ParseJDBCURL("jdbc:mysql://host:3306/mydb?useSSL=true&serverTimezone=UTC")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Dialect != "mysql" {
+		t.Errorf("dialect = %q, want mysql", parsed.Dialect)
+	}
+	if parsed.Host != "host" {
+		t.Errorf("host = %q, want host", parsed.Host)
+	}
+	if parsed.Port != 3306 {
+		t.Errorf("port = %d, want 3306", parsed.Port)
+	}
+	if parsed.Database != "mydb" {
+		t.Errorf("database = %q, want mydb", parsed.Database)
+	}
+	if parsed.Props["useSSL"] != "true" {
+		t.Errorf("prop useSSL = %q, want true", parsed.Props["useSSL"])
+	}
+	if parsed.Props["serverTimezone"] != "UTC" {
+		t.Errorf("prop serverTimezone = %q, want UTC", parsed.Props["serverTimezone"])
+	}
+}
+
+func TestParseJDBCURL_MySQL_DefaultPort(t *testing.T) {
+	parsed, err := ParseJDBCURL("jdbc:mysql://host/mydb")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if parsed.Dialect != "mysql" {
+		t.Errorf("dialect = %q, want mysql", parsed.Dialect)
+	}
+	if parsed.Host != "host" {
+		t.Errorf("host = %q, want host", parsed.Host)
+	}
+	if parsed.Port != 3306 {
+		t.Errorf("port = %d, want 3306", parsed.Port)
+	}
+	if parsed.Database != "mydb" {
+		t.Errorf("database = %q, want mydb", parsed.Database)
+	}
+}
