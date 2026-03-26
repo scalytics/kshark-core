@@ -2,9 +2,9 @@
 
 ![kshark title image](docs/images/title.png)
 
-**A powerful command-line diagnostic tool for Apache Kafka connectivity**
+**A powerful command-line diagnostic tool for Apache Kafka and connector target connectivity**
 
-`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire agent-to-broker communication path. It systematically tests every layer from DNS resolution through TLS security to Kafka protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
+`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire agent-to-broker communication path — and now also validates connectivity from Kafka Connect workers to their source and sink database targets (MongoDB, PostgreSQL, DB2). It systematically tests every layer from DNS resolution through TLS security to application protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
@@ -45,7 +45,9 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 - [Quick Start](#quick-start)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Connector Probe](#connector-probe)
 - [Configuration](#configuration)
+- [Integration Testbed](#integration-testbed)
 - [Documentation](#documentation)
 - [Architecture](#architecture)
 - [Contributing](#contributing)
@@ -63,6 +65,7 @@ When an agent needs to validate a client configuration, diagnose a connection fa
     -   **L5-6 (Security):** TLS handshake, certificate validation, and expiry monitoring
     -   **L7 (Application):** Kafka protocol, metadata retrieval, topic visibility
     -   **L7 (HTTP):** Schema Registry and REST Proxy connectivity
+    -   **L7 (Connector Targets):** MongoDB, PostgreSQL, DB2 connectivity via Kafka Connect config
     -   **Diagnostics:** Traceroute, MTU discovery, network path analysis
 
 -   **End-to-End Testing:** Full produce-and-consume loop validation to verify complete data flow
@@ -110,14 +113,10 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 
 ## Quick Start
 
-### 5-Minute Test
+### A) Kafka Broker Check
 
 ```bash
-# 1. Download the latest release for your platform
-wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
-tar -xzf kshark-linux-amd64.tar.gz
-
-# 2. Create a configuration file
+# 1. Create a configuration file
 cat > client.properties <<EOF
 bootstrap.servers=your-broker.example.com:9092
 security.protocol=SASL_SSL
@@ -126,11 +125,48 @@ sasl.username=your-api-key
 sasl.password=your-api-secret
 EOF
 
-# 3. Run the diagnostic
+# 2. Run the diagnostic
 ./kshark -props client.properties
 
-# 4. Test with a specific topic
+# 3. Test with a specific topic (includes produce/consume)
 ./kshark -props client.properties -topic test-topic
+```
+
+### B) Connector Target Probe via Connect API
+
+```bash
+# Probe a MongoDB connector's target — reads config from Kafka Connect REST API
+./kshark -y --connect-url https://connect.example.com:8083 \
+            --connector-name my-mongo-sink
+```
+
+kshark fetches the connector config, extracts the `connection.uri`, and probes MongoDB layer by layer (DNS -> TCP -> TLS -> Auth -> Ping -> Collection).
+
+### C) Connector Target Probe via Local Config File
+
+```bash
+# Probe a PostgreSQL target using a local connector config JSON file
+cat > postgres-source.json <<EOF
+{
+  "name": "pg-source",
+  "connector.class": "io.confluent.connect.jdbc.JdbcSourceConnector",
+  "connection.url": "jdbc:postgresql://pghost:5432/mydb?sslmode=require",
+  "connection.user": "pguser",
+  "connection.password": "pgpass"
+}
+EOF
+
+./kshark -y --connector-config postgres-source.json
+```
+
+### D) Full Path: Kafka Broker + Connector Target
+
+```bash
+# Check both Kafka broker connectivity AND connector target in one run
+./kshark -y -props client.properties \
+            --connect-url https://connect:8083 \
+            --connector-name my-mongo-sink \
+            -topic test-topic
 ```
 
 ### Quick Preset Example
@@ -265,7 +301,7 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 
 | Flag | Description | Default | Example |
 |------|-------------|---------|---------|
-| `-props` | Path to properties file | (required) | `-props config.properties` |
+| `-props` | Path to properties file | (optional*) | `-props config.properties` |
 | `-topic` | Comma-separated topics to test | (optional) | `-topic orders,payments` |
 | `-group` | Consumer group for probe | (ephemeral) | `-group kshark-probe` |
 | `--preset` | Configuration preset | (none) | `--preset cc-plain` |
@@ -284,6 +320,74 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 | `-json` | Export to JSON file | (none) | `-json output.json` |
 | `-y` | Skip confirmation prompt | false | `-y` |
 | `--version` | Show version info | - | `--version` |
+| `--connect-url` | Kafka Connect REST API URL | (none) | `--connect-url https://connect:8083` |
+| `--connector-name` | Connector name to probe via Connect API | (none) | `--connector-name my-sink` |
+| `--connector-config` | Local connector config JSON file | (none) | `--connector-config mongo.json` |
+| `--connect-basic-auth` | user:pass for Connect API (or `KSHARK_CONNECT_AUTH` env) | (none) | `--connect-basic-auth admin:secret` |
+| `--connect-bearer-token` | Bearer token for Connect API (or `KSHARK_CONNECT_TOKEN` env) | (none) | |
+| `--connect-ca-cert` | CA cert PEM for Connect API TLS | (none) | |
+
+*`-props` is optional when using connector-only mode (`--connect-url` or `--connector-config`).
+
+---
+
+## Connector Probe
+
+kshark can probe the database targets that Kafka Connect connectors read from or write to. It reads the connector configuration (either from the Connect REST API or a local JSON file), extracts the connection parameters, and tests connectivity layer by layer.
+
+### Supported Connectors
+
+| Connector Type | Database | Protocol |
+|----------------|----------|----------|
+| MongoDB Sink/Source (`MongoSinkConnector`, `MongoSourceConnector`) | MongoDB / Atlas | MongoDB Wire Protocol |
+| JDBC Source/Sink with `jdbc:postgresql://` URL | PostgreSQL | PostgreSQL Wire Protocol v3 |
+| JDBC Source/Sink with `jdbc:db2://` URL | IBM DB2 | DRDA Wire Protocol |
+
+### Probe Layers
+
+Each database target is probed through these layers:
+
+```
+L3-DNS       Resolve hostname
+L4-TCP       TCP connection to host:port
+L5-6-TLS     TLS handshake (if configured)
+L7-Auth      Database authentication (SCRAM, MD5, DRDA SECCHK)
+L7-Ping/DB   Database accessibility check
+L7-Collection Collection/table existence (optional)
+```
+
+### Example Output
+
+```
+=== Connector Probe: my-mongo-sink ===
+  Type: com.mongodb.kafka.connect.MongoSinkConnector
+  Target: mongodb:27017
+  Database: testdb | Collection: events
+
+  L3-DNS       OK    Resolved to 10.0.1.1
+  L4-TCP       OK    Connected in 0ms
+  L5-6-TLS     SKIP  Plain connection (no TLS)
+  L7-Auth      OK    Authentication succeeded
+  L7-Ping      OK    Database 'testdb' responded to ping
+  L7-Collection OK   Collection 'events' is accessible
+```
+
+### Config Source Options
+
+| Mode | Flags | Use when |
+|------|-------|----------|
+| Connect API | `--connect-url` + `--connector-name` | Connect cluster is reachable |
+| Local file | `--connector-config file.json` | Connect API is not available |
+| API + fallback | All three flags | Try API first, fall back to file |
+
+### Environment Variables
+
+Avoid putting credentials in shell history:
+
+```bash
+export KSHARK_CONNECT_AUTH="admin:secret"    # instead of --connect-basic-auth
+export KSHARK_CONNECT_TOKEN="eyJhbG..."      # instead of --connect-bearer-token
+```
 
 ---
 
@@ -343,6 +447,24 @@ export KSHARK_AI_API_KEY=sk-...
 
 ---
 
+## Integration Testbed
+
+A complete Docker Compose testbed is included for end-to-end testing:
+
+```bash
+cd testbed/
+docker compose up -d                          # Start all services
+docker compose exec kshark /run-tests.sh      # Run 10 integration tests
+docker compose exec kshark /run-tests.sh --skip-db2  # Skip DB2 (Apple Silicon)
+docker compose down -v                        # Cleanup
+```
+
+Services: Kafka (KRaft), Kafka Connect (MongoDB + JDBC plugins), MongoDB 7.0, PostgreSQL 16, IBM DB2 11.5.
+
+See [testbed/TESTBED-SPEC.md](testbed/TESTBED-SPEC.md) for details.
+
+---
+
 ## Documentation
 
 Comprehensive documentation is available in the `docs/` directory:
@@ -397,6 +519,13 @@ kshark uses a layered testing approach to systematically validate connectivity:
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
+│  L7: Connector Targets (optional)       │
+│  • MongoDB (SRV, SCRAM, Ping, Coll)     │
+│  • PostgreSQL (Wire Protocol v3)        │
+│  • DB2 (DRDA Wire Protocol)             │
+└─────────────────────────────────────────┘
+                  ↓
+┌─────────────────────────────────────────┐
 │  Diagnostics                            │
 │  • Traceroute / Path Analysis           │
 │  • MTU Discovery                        │
@@ -411,22 +540,32 @@ For detailed architecture information, see [ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 ```
 kshark-core/
-├── cmd/kshark/          # Main application source code
-│   └── main.go          # Single-file application (1,350 lines)
-├── web/templates/       # HTML report templates
-├── docs/                # Documentation
-│   ├── ARCHITECTURE.md  # Architecture overview
-│   ├── FEATURES.md      # Feature documentation
-│   ├── DEPLOYMENT.md    # Deployment guide
-│   ├── SECURITY.md      # Security recommendations
-│   └── images/          # Documentation images
-├── .github/workflows/   # CI/CD automation
-├── reports/             # Generated reports (gitignored)
-├── Dockerfile           # Container build definition
-├── .goreleaser.yaml     # Release configuration
-├── go.mod               # Go module definition
-├── LICENSE              # Apache 2.0 license
-└── README.md            # This file
+├── cmd/kshark/            # Main application + SSRF protection
+│   ├── main.go            # Main application (~2500 lines)
+│   └── ssrf_test.go       # SSRF protection tests
+├── internal/              # Internal packages
+│   ├── probe/             # Database probing engine
+│   │   ├── types.go       # ProbeTarget, ProbeStep, Prober interface
+│   │   ├── common.go      # Shared DNS/TCP/TLS probe helpers
+│   │   ├── mongodb.go     # MongoDB prober (mongo-driver)
+│   │   ├── postgres.go    # PostgreSQL prober (pgx)
+│   │   └── db2.go         # DB2 prober (custom DRDA wire protocol)
+│   └── connectapi/        # Kafka Connect integration
+│       ├── client.go      # Connect REST API client (SSRF-protected)
+│       ├── config_parser.go # Connector type detection + config extraction
+│       ├── jdbc_url.go    # JDBC URL parser (DB2, PostgreSQL)
+│       └── redact.go      # Credential redaction
+├── testbed/               # Docker integration testbed
+│   ├── docker-compose.yml # Kafka + Connect + MongoDB + PG + DB2
+│   ├── configs/           # Connector config examples
+│   ├── init/              # Database initialization scripts
+│   └── run-tests.sh       # 10 automated integration tests
+├── web/templates/         # HTML report templates
+├── docs/                  # Documentation
+├── Dockerfile             # Container build definition
+├── go.mod                 # Go module (kafka-go, mongo-driver, pgx)
+├── LICENSE                # Apache 2.0 license
+└── README.md              # This file
 ```
 
 ---
@@ -587,29 +726,39 @@ go build -o kshark ./cmd/kshark
 For security concerns and vulnerability reports, please see [SECURITY.md](docs/SECURITY.md).
 
 **Security Features:**
-- Credential redaction in all outputs
+- Credential redaction in all outputs (including `sasl.jaas.config`)
+- SSRF protection: two-tier model (DENY loopback/link-local, WARN RFC1918 for PrivateLink)
+- Redirect-based SSRF bypass prevention (`CheckRedirect` handler)
+- Credential scrubbing in connector probe error messages
+- Connect API auth via environment variables (`KSHARK_CONNECT_AUTH`, `KSHARK_CONNECT_TOKEN`)
 - Command injection prevention
-- Path traversal protection
 - TLS 1.2+ enforcement
 - Non-root container execution
 
-**Known Security Considerations:**
+**Security Notes:**
 - Credentials stored in plain text configuration files (use file permissions 0600)
-- SSRF risk with Schema Registry URLs (validate URLs before use)
-- See [SECURITY.md](docs/SECURITY.md) for detailed analysis and recommendations
+- RFC1918 addresses are allowed (with warning) since PrivateLink targets are common
+- See [SECURITY.md](docs/SECURITY.md) for detailed analysis
 
 ---
 
 ## Roadmap
 
-- [ ] Unit test coverage
+**Completed:**
+- [x] Modular architecture (internal packages)
+- [x] Connector target probing (MongoDB, DB2, PostgreSQL)
+- [x] SSRF protection (two-tier model)
+- [x] Enhanced AI analysis prompt (layered reasoning, confidence, severity)
+- [x] Integration testbed (Docker Compose, 10 automated tests)
+- [x] Credential redaction hardening (sasl.jaas.config, bearer tokens)
+
+**Planned:**
+- [ ] Oracle, MySQL, SQL Server connector probes
 - [ ] Concurrency for multi-broker checks
-- [ ] Historical trend analysis
 - [ ] Prometheus metrics export
 - [ ] OpenTelemetry integration
-- [ ] Modular architecture (separate packages)
-- [ ] Additional authentication methods (OAuth)
 - [ ] REST API mode
+- [ ] Historical trend analysis
 
 ---
 
@@ -638,6 +787,9 @@ limitations under the License.
 ## Acknowledgments
 
 - Built with [segmentio/kafka-go](https://github.com/segmentio/kafka-go)
+- MongoDB probing via [mongo-driver](https://github.com/mongodb/mongo-go-driver) (pure Go)
+- PostgreSQL probing via [pgx](https://github.com/jackc/pgx) (pure Go)
+- DB2 probing via custom DRDA wire protocol implementation (no CGO)
 - Inspired by network diagnostic tools like `tcpdump`, `wireshark`, and `netcat`
 - Special thanks to the Kafka community
 

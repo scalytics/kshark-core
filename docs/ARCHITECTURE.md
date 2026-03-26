@@ -27,20 +27,23 @@
 
 ### Key Architectural Characteristics
 
-- **Monolithic Single-File Design** - All application logic in one file for simplicity
-- **Layered Testing Approach** - Systematic validation from L3 (DNS) to L7 (Kafka Protocol)
+- **Modular Architecture** - Core logic in main.go, probe engine and Connect API in `internal/` packages
+- **Layered Testing Approach** - Systematic validation from L3 (DNS) to L7 (Kafka/MongoDB/PostgreSQL/DB2)
 - **Report-Centric Architecture** - All checks append results to a central Report structure
-- **External AI Integration** - Optional AI-powered analysis via REST APIs
+- **Connector Probe Engine** - Reads connector configs from Kafka Connect REST API or local JSON files
+- **External AI Integration** - Optional AI-powered analysis via REST APIs with layered reasoning
 - **Multi-Platform Support** - Cross-compiled for Linux, macOS, and Windows
 
 ### Project Statistics
 
 | Metric | Value |
 |--------|-------|
-| **Total Lines of Code** | 1,350 lines (Go) |
+| **Total Lines of Code** | ~3,500+ lines (Go) across 15 source files |
 | **Programming Language** | Go 1.23.2 |
-| **Binary Size** | ~33MB (includes static assets) |
-| **Main Source File** | `/cmd/kshark/main.go` |
+| **Binary Size** | ~24MB (statically linked, pure Go) |
+| **Packages** | `cmd/kshark`, `internal/probe`, `internal/connectapi` |
+| **Test Coverage** | 64 unit + 10 integration tests |
+| **Dependencies** | kafka-go, mongo-driver, pgx (all pure Go, no CGO) |
 | **License** | Apache License 2.0 |
 
 ---
@@ -108,33 +111,36 @@ User → CLI Flags → Config Parser → Health Checks → Report Builder → Ou
 
 ```
 kshark-core/
-├── cmd/
-│   └── kshark/
-│       └── main.go              # Main application (1,350 lines)
-├── web/
-│   └── templates/
-│       └── report_template.html # HTML report template
-├── docs/
-│   ├── images/
-│   │   └── title.png            # Project logo
-│   ├── ARCHITECTURE.md          # This document
-│   ├── FEATURES.md              # Feature documentation
-│   ├── DEPLOYMENT.md            # Deployment guide
-│   └── SECURITY.md              # Security recommendations
-├── reports/                     # Generated analysis reports (gitignored)
-├── .github/
-│   └── workflows/
-│       └── build-and-release.yml # CI/CD pipeline
-├── go.mod                       # Go module definition
-├── go.sum                       # Dependency checksums
-├── Dockerfile                   # Container build definition
-├── .goreleaser.yaml            # Release automation config
-├── test_docker.sh              # Docker test script
-├── client.properties.example   # Kafka config example
-├── ai_config.json.example      # AI config example
-├── .gitignore                  # Git ignore patterns
-├── LICENSE                     # Apache 2.0 license
-└── README.md                   # Project documentation
+├── cmd/kshark/
+│   ├── main.go                  # Main application (~2500 lines)
+│   └── ssrf_test.go             # SSRF protection tests
+├── internal/
+│   ├── probe/                   # Database probing engine
+│   │   ├── types.go             # ProbeTarget, ProbeStep, Prober interface
+│   │   ├── common.go            # ProbeDNS, ProbeTCP, ProbeTLS helpers
+│   │   ├── common_test.go       # Probe helper tests
+│   │   ├── mongodb.go           # MongoDB prober (mongo-driver)
+│   │   ├── postgres.go          # PostgreSQL prober (pgx)
+│   │   ├── db2.go               # DB2 DRDA wire protocol prober
+│   │   └── db2_test.go          # DRDA message construction tests
+│   └── connectapi/              # Kafka Connect integration
+│       ├── client.go            # Connect REST API client (SSRF-protected)
+│       ├── config_parser.go     # Connector type detection + extraction
+│       ├── config_parser_test.go
+│       ├── jdbc_url.go          # JDBC URL parser (DB2, PostgreSQL)
+│       ├── jdbc_url_test.go
+│       ├── redact.go            # Credential redaction
+│       └── redact_test.go
+├── testbed/                     # Docker integration testbed
+│   ├── docker-compose.yml       # 6 services (Kafka, Connect, MongoDB, PG, DB2, kshark)
+│   ├── configs/                 # Connector config examples
+│   ├── init/                    # Database initialization scripts
+│   └── run-tests.sh             # 10 automated integration tests
+├── web/templates/               # HTML report template
+├── docs/                        # Documentation
+├── Dockerfile                   # Multi-stage Alpine container
+├── go.mod                       # Go module (kafka-go, mongo-driver, pgx)
+└── README.md                    # Project documentation
 ```
 
 ### Source Code Organization
