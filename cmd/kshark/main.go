@@ -318,6 +318,11 @@ func runScan(ctx context.Context, report *Report, cfg scanConfig) {
 	// Cross-reference MTU results with produce/consume results
 	mtuCorrelation(report)
 
+	// Broker discovery scan: probe all advertised listeners not in bootstrap
+	if cfg.diag && len(brokers) > 0 {
+		brokerDiscoveryScan(report, cfg.props, brokers, cfg.kafkaTimeout)
+	}
+
 	// Run forced neighborhood scan if --neighborhood flag is set (even on success)
 	if cfg.neighborhood {
 		for _, b := range brokers {

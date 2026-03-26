@@ -17,6 +17,9 @@ const (
 	TypeMongoDB    ConnectorType = "mongodb"
 	TypeDB2        ConnectorType = "db2"
 	TypePostgreSQL ConnectorType = "postgresql"
+	TypeMySQL      ConnectorType = "mysql"
+	TypeSQLServer  ConnectorType = "sqlserver"
+	TypeOracle     ConnectorType = "oracle"
 	TypeUnknown    ConnectorType = "unknown"
 )
 
@@ -49,6 +52,12 @@ func ParseConnectorConfig(name string, cfg map[string]string) (*ParsedConnector,
 		result.Target, err = extractDB2Target(cfg)
 	case TypePostgreSQL:
 		result.Target, err = extractPostgresTarget(cfg)
+	case TypeMySQL:
+		result.Target, err = extractMySQLTarget(cfg)
+	case TypeSQLServer:
+		result.Target, err = extractSQLServerTarget(cfg)
+	case TypeOracle:
+		result.Target, err = extractOracleTarget(cfg)
 	case TypeUnknown:
 		// No extraction needed, will be reported as unsupported
 		return result, nil
@@ -79,6 +88,12 @@ func detectConnectorType(cfg map[string]string) ConnectorType {
 			return TypeDB2
 		case strings.HasPrefix(connURL, "jdbc:postgresql://"):
 			return TypePostgreSQL
+		case strings.HasPrefix(connURL, "jdbc:mysql://"):
+			return TypeMySQL
+		case strings.HasPrefix(connURL, "jdbc:sqlserver://"):
+			return TypeSQLServer
+		case strings.HasPrefix(connURL, "jdbc:oracle:"):
+			return TypeOracle
 		}
 		return TypeUnknown
 
@@ -202,6 +217,100 @@ func LoadConnectorConfigFile(path string) (map[string]string, string, error) {
 	}
 
 	return cfg, name, nil
+}
+
+func extractMySQLTarget(cfg map[string]string) (probe.ProbeTarget, error) {
+	connURL := cfg["connection.url"]
+	if connURL == "" {
+		return probe.ProbeTarget{}, fmt.Errorf("missing connection.url in JDBC connector config")
+	}
+
+	parsed, err := ParseJDBCURL(connURL)
+	if err != nil {
+		return probe.ProbeTarget{}, err
+	}
+
+	tls := strings.EqualFold(parsed.Props["useSSL"], "true") ||
+		strings.EqualFold(parsed.Props["requireSSL"], "true") ||
+		strings.EqualFold(parsed.Props["sslMode"], "REQUIRED") ||
+		strings.EqualFold(parsed.Props["sslMode"], "VERIFY_CA") ||
+		strings.EqualFold(parsed.Props["sslMode"], "VERIFY_IDENTITY")
+
+	extraProps := make(map[string]string)
+	for k, v := range parsed.Props {
+		extraProps[k] = v
+	}
+
+	return probe.ProbeTarget{
+		Host:       parsed.Host,
+		Port:       parsed.Port,
+		TLS:        tls,
+		Username:   cfg["connection.user"],
+		Password:   cfg["connection.password"],
+		Database:   parsed.Database,
+		ExtraProps: extraProps,
+	}, nil
+}
+
+func extractSQLServerTarget(cfg map[string]string) (probe.ProbeTarget, error) {
+	connURL := cfg["connection.url"]
+	if connURL == "" {
+		return probe.ProbeTarget{}, fmt.Errorf("missing connection.url in JDBC connector config")
+	}
+
+	parsed, err := ParseJDBCURL(connURL)
+	if err != nil {
+		return probe.ProbeTarget{}, err
+	}
+
+	tls := strings.EqualFold(parsed.Props["encrypt"], "true") ||
+		strings.EqualFold(parsed.Props["encrypt"], "strict")
+
+	extraProps := make(map[string]string)
+	for k, v := range parsed.Props {
+		extraProps[k] = v
+	}
+
+	return probe.ProbeTarget{
+		Host:       parsed.Host,
+		Port:       parsed.Port,
+		TLS:        tls,
+		Username:   cfg["connection.user"],
+		Password:   cfg["connection.password"],
+		Database:   parsed.Database,
+		ExtraProps: extraProps,
+	}, nil
+}
+
+func extractOracleTarget(cfg map[string]string) (probe.ProbeTarget, error) {
+	connURL := cfg["connection.url"]
+	if connURL == "" {
+		return probe.ProbeTarget{}, fmt.Errorf("missing connection.url in JDBC connector config")
+	}
+
+	parsed, err := ParseJDBCURL(connURL)
+	if err != nil {
+		return probe.ProbeTarget{}, err
+	}
+
+	// Oracle uses TCPS protocol or javax.net.ssl properties for TLS
+	tls := strings.EqualFold(parsed.Props["oracle.net.ssl_server_dn_match"], "true") ||
+		strings.Contains(strings.ToUpper(firstNonEmpty(parsed.Props["connectDescriptor"])), "PROTOCOL=TCPS")
+
+	extraProps := make(map[string]string)
+	for k, v := range parsed.Props {
+		extraProps[k] = v
+	}
+
+	return probe.ProbeTarget{
+		Host:       parsed.Host,
+		Port:       parsed.Port,
+		TLS:        tls,
+		Username:   cfg["connection.user"],
+		Password:   cfg["connection.password"],
+		Database:   parsed.Database,
+		ExtraProps: extraProps,
+	}, nil
 }
 
 func firstNonEmpty(values ...string) string {
