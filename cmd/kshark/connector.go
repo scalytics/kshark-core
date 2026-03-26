@@ -87,7 +87,7 @@ func runConnectorProbe(ctx context.Context, r *Report, connectURL, connectorName
 
 	if parsed.Type == connectapi.TypeUnknown {
 		addRow(r, Row{"connector", name, DIAG, WARN,
-			fmt.Sprintf("Connector class '%s' not supported for probing. Supported: MongoDB, JDBC (DB2, PostgreSQL, MySQL, SQL Server, Oracle)", parsed.Class), ""})
+			fmt.Sprintf("Connector class '%s' not supported for probing. Supported: MongoDB, JDBC (DB2, PostgreSQL, MySQL, SQL Server, Oracle), Redis, Elasticsearch", parsed.Class), ""})
 		return
 	}
 
@@ -121,6 +121,10 @@ func runConnectorProbe(ctx context.Context, r *Report, connectURL, connectorName
 		prober = probe.NewSQLServerProber()
 	case connectapi.TypeOracle:
 		prober = probe.NewOracleProber()
+	case connectapi.TypeRedis:
+		prober = probe.NewRedisProber()
+	case connectapi.TypeElasticsearch:
+		prober = probe.NewElasticsearchProber()
 	}
 
 	steps := prober.Probe(ctx, parsed.Target)
