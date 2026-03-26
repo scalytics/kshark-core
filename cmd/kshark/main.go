@@ -428,6 +428,22 @@ func main() {
 		case "doctor":
 			runDoctor()
 			return
+		case "diff":
+			if len(os.Args) < 4 {
+				fmt.Fprintln(os.Stderr, "Usage: kshark diff <report1.json> <report2.json>")
+				os.Exit(2)
+			}
+			runDiff(os.Args[2], os.Args[3])
+			return
+		case "trend":
+			lastN := 10
+			if len(os.Args) > 2 {
+				if os.Args[2] == "--last" && len(os.Args) > 3 {
+					lastN, _ = strconv.Atoi(os.Args[3])
+				}
+			}
+			runTrend(lastN)
+			return
 		}
 	}
 
@@ -465,6 +481,7 @@ func main() {
 	bundle := flag.String("bundle", "", "Create diagnostics bundle (.tar.gz). Optional: specify output path.")
 	tfState := flag.String("tf-state", "", "Path to Terraform state file to include in bundle (redacted)")
 	tfPlan := flag.String("tf-plan", "", "Path to Terraform plan output to include in bundle (redacted)")
+	watch := flag.Duration("watch", 0, "Re-run scan at this interval (e.g., 30s, 5m). 0 = single run.")
 	flag.Parse()
 
 	// Environment variable fallback for credentials (avoids credentials in shell history)
@@ -599,6 +616,7 @@ func main() {
 			"log-format":      paramMeta(*logFormat, "text", providedFlags["log-format"]),
 			"y":               paramMeta(strconv.FormatBool(*yes), "false", providedFlags["y"]),
 			"version":         paramMeta(strconv.FormatBool(*showVersion), "false", providedFlags["version"]),
+			"watch":           paramMeta(watch.String(), "0s", providedFlags["watch"]),
 		},
 	}
 
@@ -622,7 +640,7 @@ func main() {
 	// Print the plan and wait for confirmation if not running in non-interactive mode
 	printScanPlan(props, topics, *diag, *analyze, *jsonOut, aiProviderName, aiModel)
 
-	if !*yes {
+	if !*yes && *watch <= 0 {
 		reader := bufio.NewReader(os.Stdin)
 		for {
 			fmt.Print("\nContinue with the scan? (y/n): ")
@@ -638,17 +656,8 @@ func main() {
 		}
 	}
 
-	// Prepare and start scan animation in the background if stdout is a TTY
-	var startAnimation, doneAnimation chan bool
-	if isTTY(os.Stdout) {
-		startAnimation = make(chan bool)
-		doneAnimation = make(chan bool)
-		go animateSharkFin(startAnimation, doneAnimation)
-		startAnimation <- true // Signal the animation to start
-	}
-
-	// Run the scan
-	runScan(ctx, report, scanConfig{
+	// Build the scanConfig once; reused in watch mode
+	cfg := scanConfig{
 		props:          props,
 		bootstrap:      bootstrap,
 		topics:         topics,
@@ -670,7 +679,121 @@ func main() {
 		probeDirection: *probeDirection,
 		neighborhood:   *neighborhood,
 		neighborPorts:  *neighborPorts,
-	})
+	}
+
+	// ---- Watch mode ----
+	if *watch > 0 {
+		// Set up a dedicated signal channel for watch-mode graceful stop
+		watchCtx, watchCancel := context.WithCancel(context.Background())
+		defer watchCancel()
+
+		watchSig := make(chan os.Signal, 1)
+		signal.Notify(watchSig, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			if sig, ok := <-watchSig; ok {
+				slog.Warn("received signal in watch mode, stopping after current scan", "signal", sig)
+				watchCancel()
+			}
+		}()
+
+		iteration := 1
+		for {
+			// Clear screen
+			fmt.Print("\033[2J\033[H")
+			nextRun := time.Now().Add(*watch)
+			fmt.Printf("kshark watch — iteration %d  |  interval %s  |  next run ~%s\n",
+				iteration, watch.String(), nextRun.Format("15:04:05"))
+			fmt.Println(strings.Repeat("─", 72))
+
+			// Create a fresh report and per-iteration context
+			iterReport := &Report{StartedAt: time.Now()}
+			iterReport.ConfigEcho = report.ConfigEcho
+			iterReport.Run = report.Run
+
+			iterCtx, iterCancel := context.WithTimeout(watchCtx, *timeout)
+
+			// Prepare and start scan animation
+			var startAnim, doneAnim chan bool
+			if isTTY(os.Stdout) {
+				startAnim = make(chan bool)
+				doneAnim = make(chan bool)
+				go animateSharkFin(startAnim, doneAnim)
+				startAnim <- true
+			}
+
+			scanStart := time.Now()
+			runScan(iterCtx, iterReport, cfg)
+			iterCancel()
+
+			if doneAnim != nil {
+				doneAnim <- true
+			}
+
+			iterReport.FinishedAt = time.Now()
+			summarize(iterReport)
+			printPretty(iterReport)
+
+			// Save JSON with incrementing suffix if -json is set
+			if *jsonOut != "" {
+				ext := filepath.Ext(*jsonOut)
+				base := strings.TrimSuffix(*jsonOut, ext)
+				watchFile := fmt.Sprintf("%s_%03d%s", base, iteration, ext)
+				actualPath, writeErr := writeJSON(watchFile, iterReport)
+				if writeErr != nil {
+					fmt.Fprintf(os.Stderr, "Error writing JSON report: %v\n", writeErr)
+				} else {
+					absPath, _ := filepath.Abs(actualPath)
+					fmt.Printf("JSON report written to %s\n", absPath)
+				}
+			}
+
+			// Check if context was cancelled (SIGINT received)
+			select {
+			case <-watchCtx.Done():
+				fmt.Printf("\nWatch mode stopped after iteration %d.\n", iteration)
+				if iterReport.HasFailed {
+					os.Exit(layeredExitCode(iterReport))
+				}
+				return
+			default:
+			}
+
+			// Sleep for remaining interval (skip if scan took longer)
+			elapsed := time.Since(scanStart)
+			remaining := *watch - elapsed
+			if remaining > 0 {
+				fmt.Printf("\nNext scan in %s (at %s) — press Ctrl+C to stop.\n",
+					formatDuration(remaining), time.Now().Add(remaining).Format("15:04:05"))
+				select {
+				case <-time.After(remaining):
+				case <-watchCtx.Done():
+					fmt.Printf("\nWatch mode stopped after iteration %d.\n", iteration)
+					if iterReport.HasFailed {
+						os.Exit(layeredExitCode(iterReport))
+					}
+					return
+				}
+			} else {
+				fmt.Println("\nScan took longer than interval, starting next iteration immediately.")
+			}
+
+			iteration++
+		}
+	}
+
+	// ---- Single-run mode (original behavior) ----
+
+	// Prepare and start scan animation in the background if stdout is a TTY
+	var startAnimation, doneAnimation chan bool
+	if isTTY(os.Stdout) {
+		startAnimation = make(chan bool)
+		doneAnimation = make(chan bool)
+		go animateSharkFin(startAnimation, doneAnimation)
+		startAnimation <- true // Signal the animation to start
+	}
+
+	// Run the scan
+	runScan(ctx, report, cfg)
 
 	// Stop scan animation if it was started
 	if doneAnimation != nil {

@@ -214,7 +214,7 @@ func earliestCertExpiry(state *tls.ConnectionState) time.Time {
 // Catches patterns like mongodb://user:pass@host and password=secret.
 func ScrubCredentials(msg string) string {
 	// Scrub URI userinfo: ://user:pass@ -> ://[REDACTED]@
-	for _, scheme := range []string{"mongodb://", "mongodb+srv://", "postgresql://", "jdbc:"} {
+	for _, scheme := range []string{"mongodb://", "mongodb+srv://", "postgresql://", "jdbc:", "redis://", "rediss://", "http://", "https://"} {
 		idx := strings.Index(msg, scheme)
 		if idx < 0 {
 			continue
