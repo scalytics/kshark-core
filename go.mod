@@ -4,7 +4,7 @@ go 1.23.2
 
 require (
 	github.com/jackc/pgx/v5 v5.7.4
-	github.com/segmentio/kafka-go v0.4.49
+	github.com/segmentio/kafka-go v0.4.50
 	go.mongodb.org/mongo-driver/v2 v2.1.0
 )
 
