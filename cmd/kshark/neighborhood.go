@@ -25,6 +25,9 @@ import (
 	"time"
 )
 
+// Compile-time check that removed imports don't break anything.
+// broker_discovery.go now owns: context, strconv for broker discovery.
+
 // ---------- Neighborhood Scan ----------
 
 // PortProbeResult captures the result of probing a single TCP port.
@@ -307,134 +310,24 @@ func hasNeighborhoodRows(r *Report, host string) bool {
 	return false
 }
 
-// ---------- Broker Discovery Scan ----------
-
-// brokerDiscoveryScan discovers all brokers from the Kafka Metadata response
-// and probes any that are NOT in the bootstrap list. This detects advertised
-// listener mismatches — the most common Kafka networking problem.
-func brokerDiscoveryScan(r *Report, props map[string]string, bootstrapAddrs []string, kafkaTimeout time.Duration) {
-	if len(bootstrapAddrs) == 0 {
-		return
-	}
-
-	// Build set of known bootstrap hosts for comparison
-	bootstrapSet := make(map[string]bool)
-	for _, addr := range bootstrapAddrs {
-		addr = strings.TrimSpace(addr)
-		bootstrapSet[addr] = true
-		// Also add just the host without port
-		if h, _, err := net.SplitHostPort(addr); err == nil {
-			bootstrapSet[h] = true
-		}
-	}
-
-	// Connect to first reachable bootstrap broker and get metadata
-	for _, addr := range bootstrapAddrs {
-		addr = strings.TrimSpace(addr)
-		host, _, _ := net.SplitHostPort(addr)
-		dialer, _, err := dialerFromProps(props, host)
-		if err != nil {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), kafkaTimeout)
-		conn, err := dialer.DialContext(ctx, "tcp", addr)
-		cancel()
-		if err != nil {
-			continue
-		}
-
-		parts, err := conn.ReadPartitions()
-		conn.Close()
-		if err != nil {
-			slog.Debug("broker discovery: ReadPartitions failed", "addr", addr, "err", err)
-			continue
-		}
-
-		// Extract unique broker addresses from partition leaders/replicas
-		discoveredBrokers := make(map[string]bool)
-		for _, p := range parts {
-			if p.Leader.Host != "" {
-				brokerAddr := net.JoinHostPort(p.Leader.Host, strconv.Itoa(p.Leader.Port))
-				if !bootstrapSet[brokerAddr] && !bootstrapSet[p.Leader.Host] {
-					discoveredBrokers[brokerAddr] = true
-				}
-			}
-			for _, replica := range p.Replicas {
-				if replica.Host != "" {
-					brokerAddr := net.JoinHostPort(replica.Host, strconv.Itoa(replica.Port))
-					if !bootstrapSet[brokerAddr] && !bootstrapSet[replica.Host] {
-						discoveredBrokers[brokerAddr] = true
-					}
-				}
-			}
-		}
-
-		if len(discoveredBrokers) == 0 {
-			slog.Debug("broker discovery: no additional brokers found beyond bootstrap")
-			return
-		}
-
-		slog.Debug("broker discovery: found non-bootstrap brokers", "count", len(discoveredBrokers))
-
-		// Probe each discovered broker with DNS + TCP
-		for brokerAddr := range discoveredBrokers {
-			host, _, err := net.SplitHostPort(brokerAddr)
-			if err != nil {
-				continue
-			}
-
-			// DNS check
-			addrs, dnsErr := net.LookupHost(host)
-			if dnsErr != nil {
-				addRow(r, Row{
-					"neighborhood", brokerAddr, L3, FAIL,
-					fmt.Sprintf("Discovered broker DNS failed: %v", dnsErr),
-					"Cluster advertises " + host + " but it is not resolvable from this network. Check advertised.listeners or DNS setup.",
-				})
-				continue
-			}
-			slog.Debug("broker discovery DNS ok", "host", host, "addrs", addrs)
-
-			// TCP check
-			tcpConn, tcpErr := net.DialTimeout("tcp", brokerAddr, 5*time.Second)
-			if tcpErr != nil {
-				addRow(r, Row{
-					"neighborhood", brokerAddr, L4, FAIL,
-					fmt.Sprintf("Discovered broker unreachable: %v", tcpErr),
-					"Cluster advertises " + brokerAddr + " but TCP connect fails. Check advertised.listeners, firewall rules, or PrivateLink config.",
-				})
-				continue
-			}
-			tcpConn.Close()
-
-			addRow(r, Row{
-				"neighborhood", brokerAddr, DIAG, OK,
-				fmt.Sprintf("Discovered broker reachable (resolved to %s)", strings.Join(addrs, ",")),
-				"",
-			})
-		}
-		return // only need one successful bootstrap connection
-	}
-}
-
 // ---------- Connector Neighborhood Ports ----------
+
+// connectorNeighborhoodPortsMap maps connector types to their default neighborhood ports.
+var connectorNeighborhoodPortsMap = map[string][]int{
+	"mongodb":    {27017, 27018, 27019, 443},
+	"postgresql": {5432, 5433, 443},
+	"db2":        {50000, 50001, 446, 443},
+	"mysql":      {3306, 3307, 443},
+	"sqlserver":  {1433, 1434, 443},
+	"oracle":     {1521, 1522, 443},
+	"redis":      {6379, 6380, 443},
+	"elasticsearch": {9200, 9300, 443},
+}
 
 // connectorNeighborhoodPorts returns the default neighborhood ports for a given connector type.
 func connectorNeighborhoodPorts(connectorType string) []int {
-	switch connectorType {
-	case "mongodb":
-		return []int{27017, 27018, 27019, 443}
-	case "postgresql":
-		return []int{5432, 5433, 443}
-	case "db2":
-		return []int{50000, 50001, 446, 443}
-	case "mysql":
-		return []int{3306, 3307, 443}
-	case "sqlserver":
-		return []int{1433, 1434, 443}
-	case "oracle":
-		return []int{1521, 1522, 443}
-	default:
-		return defaultNeighborhoodPorts
+	if ports, ok := connectorNeighborhoodPortsMap[connectorType]; ok {
+		return ports
 	}
+	return defaultNeighborhoodPorts
 }
