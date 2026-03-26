@@ -1,3 +1,9 @@
+---
+layout: default
+title: Deployment
+nav_order: 4
+---
+
 # kshark Deployment Guide
 
 **Version:** 1.0
@@ -49,19 +55,19 @@ This guide covers deployment strategies for kshark across different environments
 **Download:**
 ```bash
 # Linux (amd64)
-wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
 tar -xzf kshark-linux-amd64.tar.gz
 sudo mv kshark /usr/local/bin/
 chmod +x /usr/local/bin/kshark
 
 # macOS (arm64)
-wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-darwin-arm64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-darwin-arm64.tar.gz
 tar -xzf kshark-darwin-arm64.tar.gz
 sudo mv kshark /usr/local/bin/
 chmod +x /usr/local/bin/kshark
 
 # Windows (amd64)
-wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-windows-amd64.zip
+wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-windows-amd64.zip
 unzip kshark-windows-amd64.zip
 # Add to PATH or move to C:\Windows\System32\
 ```
@@ -78,7 +84,7 @@ kshark --version
 **Clone and Build:**
 ```bash
 # Clone repository
-git clone https://github.com/your-org/kshark-core.git
+git clone https://github.com/scalytics/kshark-core.git
 cd kshark-core
 
 # Download dependencies
@@ -163,7 +169,7 @@ kshark -props ~/.kshark/client.properties -y
 **Using Provided Dockerfile:**
 ```bash
 # Clone repository
-git clone https://github.com/your-org/kshark-core.git
+git clone https://github.com/scalytics/kshark-core.git
 cd kshark-core
 
 # Build image
@@ -542,7 +548,7 @@ jobs:
 
       - name: Download kshark
         run: |
-          wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
+          wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
           tar -xzf kshark-linux-amd64.tar.gz
           chmod +x kshark
 
@@ -584,7 +590,7 @@ kafka_diagnostic:
 
   before_script:
     - apk add --no-cache wget tar
-    - wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
+    - wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
     - tar -xzf kshark-linux-amd64.tar.gz
     - chmod +x kshark
 
@@ -628,7 +634,7 @@ pipeline {
         stage('Download kshark') {
             steps {
                 sh '''
-                    wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
+                    wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
                     tar -xzf kshark-linux-amd64.tar.gz
                     chmod +x kshark
                 '''

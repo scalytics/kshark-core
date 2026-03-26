@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/your-username/kshark/internal/probe"
+	"github.com/scalytics/kshark-core/internal/probe"
 )
 
 // ConnectorType identifies the type of database connector.

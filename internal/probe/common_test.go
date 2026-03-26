@@ -1,8 +1,14 @@
 package probe
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProbeDNS_Success(t *testing.T) {
@@ -98,5 +104,127 @@ func TestBuildTLSConfig_BadCAPath(t *testing.T) {
 	_, err := BuildTLSConfig("example.com", "/nonexistent/ca.pem", false)
 	if err == nil {
 		t.Fatal("expected error for nonexistent CA cert")
+	}
+}
+
+func TestTlsDetail(t *testing.T) {
+	t.Run("TLS 1.3 with peer cert", func(t *testing.T) {
+		expiry := time.Date(2027, 6, 15, 0, 0, 0, 0, time.UTC)
+		state := &tls.ConnectionState{
+			Version: tls.VersionTLS13,
+			PeerCertificates: []*x509.Certificate{
+				{
+					Subject:  x509.Certificate{}.Subject,
+					NotAfter: expiry,
+				},
+			},
+		}
+		state.PeerCertificates[0].Subject.CommonName = "db.example.com"
+
+		detail := tlsDetail(state)
+		if !strings.Contains(detail, "TLS 1.3") {
+			t.Errorf("detail %q does not contain 'TLS 1.3'", detail)
+		}
+		if !strings.Contains(detail, "db.example.com") {
+			t.Errorf("detail %q does not contain CN 'db.example.com'", detail)
+		}
+		if !strings.Contains(detail, "2027-06-15") {
+			t.Errorf("detail %q does not contain expiry date", detail)
+		}
+	})
+
+	t.Run("TLS 1.2 no peer certs", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			Version: tls.VersionTLS12,
+		}
+		detail := tlsDetail(state)
+		if detail != "TLS 1.2" {
+			t.Errorf("detail = %q, want 'TLS 1.2'", detail)
+		}
+	})
+
+	t.Run("unknown version", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			Version: 0,
+		}
+		detail := tlsDetail(state)
+		if detail != "unknown" {
+			t.Errorf("detail = %q, want 'unknown'", detail)
+		}
+	})
+
+	t.Run("TLS 1.0", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			Version: tls.VersionTLS10,
+		}
+		detail := tlsDetail(state)
+		if !strings.Contains(detail, "TLS 1.0") {
+			t.Errorf("detail = %q, want to contain 'TLS 1.0'", detail)
+		}
+	})
+
+	t.Run("TLS 1.1", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			Version: tls.VersionTLS11,
+		}
+		detail := tlsDetail(state)
+		if !strings.Contains(detail, "TLS 1.1") {
+			t.Errorf("detail = %q, want to contain 'TLS 1.1'", detail)
+		}
+	})
+}
+
+func TestEarliestCertExpiry(t *testing.T) {
+	t.Run("no certs returns zero time", func(t *testing.T) {
+		state := &tls.ConnectionState{}
+		got := earliestCertExpiry(state)
+		if !got.IsZero() {
+			t.Errorf("expected zero time, got %v", got)
+		}
+	})
+
+	t.Run("one cert returns its NotAfter", func(t *testing.T) {
+		expiry := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{
+				{NotAfter: expiry, SerialNumber: big.NewInt(1)},
+			},
+		}
+		got := earliestCertExpiry(state)
+		if !got.Equal(expiry) {
+			t.Errorf("got %v, want %v", got, expiry)
+		}
+	})
+
+	t.Run("two certs returns earlier one", func(t *testing.T) {
+		early := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+		late := time.Date(2028, 12, 1, 0, 0, 0, 0, time.UTC)
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{
+				{NotAfter: late, SerialNumber: big.NewInt(1)},
+				{NotAfter: early, SerialNumber: big.NewInt(2)},
+			},
+		}
+		got := earliestCertExpiry(state)
+		if !got.Equal(early) {
+			t.Errorf("got %v, want %v", got, early)
+		}
+	})
+}
+
+func TestBuildTLSConfig_WithValidCA(t *testing.T) {
+	// Create a temp dir with a valid (self-signed) CA PEM for testing.
+	// We test that an invalid PEM file returns an error.
+	dir := t.TempDir()
+	badPEM := filepath.Join(dir, "bad.pem")
+	if err := os.WriteFile(badPEM, []byte("not a real cert"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := BuildTLSConfig("example.com", badPEM, false)
+	if err == nil {
+		t.Fatal("expected error for invalid PEM")
+	}
+	if !strings.Contains(err.Error(), "failed to parse CA cert") {
+		t.Errorf("error = %q, expected 'failed to parse CA cert'", err.Error())
 	}
 }

@@ -84,6 +84,21 @@ func (p *PostgresProber) Probe(ctx context.Context, target ProbeTarget) []ProbeS
 	return steps
 }
 
+// pgQuote quotes a value for use in a PostgreSQL keyword=value DSN.
+// Values containing spaces, quotes, or backslashes must be single-quoted
+// with internal single quotes escaped as \'.
+func pgQuote(v string) string {
+	if v == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(v, " '\\\t\n") {
+		return v
+	}
+	escaped := strings.ReplaceAll(v, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `'`, `\'`)
+	return "'" + escaped + "'"
+}
+
 func buildPostgresDSN(target ProbeTarget) string {
 	sslmode := target.SSLMode
 	if sslmode == "" {
@@ -91,10 +106,11 @@ func buildPostgresDSN(target ProbeTarget) string {
 	}
 
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		target.Host, target.Port, target.Username, target.Password, target.Database, sslmode)
+		pgQuote(target.Host), target.Port, pgQuote(target.Username),
+		pgQuote(target.Password), pgQuote(target.Database), pgQuote(sslmode))
 
 	if rootCert, ok := target.ExtraProps["sslrootcert"]; ok && rootCert != "" {
-		dsn += fmt.Sprintf(" sslrootcert=%s", rootCert)
+		dsn += fmt.Sprintf(" sslrootcert=%s", pgQuote(rootCert))
 	}
 
 	return dsn

@@ -1,6 +1,7 @@
 package connectapi
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -88,4 +89,76 @@ func containsInner(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestRedactMongoURI_Detailed(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantSub    string // substring that must appear in output
+		wantAbsent string // substring that must not appear in output
+	}{
+		{
+			name:       "standard mongodb with creds redacted",
+			input:      "mongodb://user:pass@host:27017/db",
+			wantSub:    "@host:27017/db",
+			wantAbsent: "pass",
+		},
+		{
+			name:    "URI without credentials unchanged host",
+			input:   "mongodb://host:27017/db",
+			wantSub: "host:27017/db",
+		},
+		{
+			name:       "mongodb+srv with creds redacted",
+			input:      "mongodb+srv://admin:s3cret@cluster0.mongodb.net/mydb",
+			wantSub:    "@cluster0.mongodb.net/mydb",
+			wantAbsent: "s3cret",
+		},
+		{
+			name:    "empty string returns empty",
+			input:   "",
+			wantSub: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := RedactMongoURI(tt.input)
+			if tt.wantSub != "" {
+				if !strings.Contains(result, tt.wantSub) {
+					t.Errorf("result %q does not contain %q", result, tt.wantSub)
+				}
+			}
+			if tt.wantAbsent != "" {
+				if strings.Contains(result, tt.wantAbsent) {
+					t.Errorf("result %q still contains %q", result, tt.wantAbsent)
+				}
+			}
+			if tt.input == "" && result != "" {
+				t.Errorf("empty input should return empty, got %q", result)
+			}
+		})
+	}
+}
+
+func TestRedactMongoURI_ContainsRedactedMarker(t *testing.T) {
+	result := RedactMongoURI("mongodb://user:pass@host:27017/db")
+	if !strings.Contains(result, "REDACTED") {
+		t.Errorf("result %q should contain REDACTED marker", result)
+	}
+}
+
+func TestRedactConnectorConfig_TokenField(t *testing.T) {
+	cfg := map[string]string{
+		"bearer.token":    "secret-token-value",
+		"normal.field":    "visible",
+	}
+	redacted := RedactConnectorConfig(cfg)
+	if redacted["bearer.token"] != "[REDACTED]" {
+		t.Errorf("token field = %q, want [REDACTED]", redacted["bearer.token"])
+	}
+	if redacted["normal.field"] != "visible" {
+		t.Errorf("normal field should not be redacted")
+	}
 }

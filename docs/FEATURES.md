@@ -1,7 +1,13 @@
+---
+layout: default
+title: Features
+nav_order: 3
+---
+
 # kshark Feature Documentation
 
-**Version:** 1.0
-**Last Updated:** 2025-11-13
+**Version:** 1.1
+**Last Updated:** 2026-03-26
 
 ---
 
@@ -159,7 +165,7 @@ When a topic is specified, kshark performs a complete produce/consume cycle:
 
 ### DNS Resolution Check
 **Function:** `checkDNS()`
-**Location:** `cmd/kshark/main.go:1069-1082`
+**Location:** `cmd/kshark/httpcheck.go`
 
 **What it checks:**
 - Hostname resolution to IP address(es)
@@ -688,13 +694,15 @@ Premium features require a valid `license.key` file.
 
 ### Flags Reference
 
-#### Required
+#### Required (one of)
 
 | Flag | Description | Example |
 |------|-------------|---------|
 | `-props` | Properties file path | `-props client.properties` |
+| `-connect-url` | Kafka Connect REST API URL (connector-only mode) | `-connect-url https://connect:8083` |
+| `-connector-config` | Local connector config JSON file (connector-only mode) | `-connector-config sink.json` |
 
-#### Optional
+#### Optional -- General
 
 | Flag | Description | Default | Example |
 |------|-------------|---------|---------|
@@ -705,10 +713,11 @@ Premium features require a valid `license.key` file.
 | `-op-timeout` | Produce/consume timeout | 10s | `-op-timeout 30s` |
 | `-produce-timeout` | Produce timeout (overrides `-op-timeout`) | (none) | `-produce-timeout 20s` |
 | `-consume-timeout` | Consume timeout (overrides `-op-timeout`) | (none) | `-consume-timeout 45s` |
-| `-start-offset` | Probe read start offset (`earliest|latest`) | `earliest` | `-start-offset latest` |
-| `-balancer` | Probe partition balancer (`least|rr|random`) | `least` | `-balancer rr` |
+| `-start-offset` | Probe read start offset (`earliest\|latest`) | `earliest` | `-start-offset latest` |
+| `-balancer` | Probe partition balancer (`least\|rr\|random`) | `least` | `-balancer rr` |
 | `-diag` | Enable traceroute/MTU diagnostics | true | `-diag=false` |
 | `-log` | Write detailed scan log to file | auto | `-log /tmp/kshark.log` |
+| `-log-format` | Log output format (`text\|json`) | `text` | `-log-format json` |
 | `-y` | Skip confirmation | false | `-y` |
 | `--analyze` | AI analysis | false | `--analyze` |
 | `-no-ai` | Skip AI analysis even if enabled | false | `-no-ai` |
@@ -716,6 +725,62 @@ Premium features require a valid `license.key` file.
 | `-json` | JSON output file | (none) | `-json report.json` |
 | `--preset` | Config preset | (none) | `--preset cc-plain` |
 | `--version` | Show version | - | `--version` |
+
+#### Optional -- Connector Probe
+
+| Flag | Description | Default | Example |
+|------|-------------|---------|---------|
+| `-connect-url` | Kafka Connect REST API URL | (none) | `-connect-url https://connect:8083` |
+| `-connector-name` | Connector name to probe via Connect REST API | (none) | `-connector-name mongo-sink` |
+| `-connector-config` | Path to local connector config JSON file (fallback) | (none) | `-connector-config sink.json` |
+| `-connect-basic-auth` | `user:pass` for Connect REST API basic auth | (none) | `-connect-basic-auth admin:secret` |
+| `-connect-bearer-token` | Bearer token for Connect REST API auth | (none) | `-connect-bearer-token eyJ...` |
+| `-connect-ca-cert` | CA cert PEM for Connect REST API TLS | (none) | `-connect-ca-cert /path/ca.pem` |
+
+Connector credentials can also be set via environment variables to avoid shell history exposure:
+- `KSHARK_CONNECT_AUTH` -- equivalent to `-connect-basic-auth`
+- `KSHARK_CONNECT_TOKEN` -- equivalent to `-connect-bearer-token`
+
+---
+
+### Signal Handling
+
+kshark handles SIGINT (Ctrl+C) and SIGTERM for graceful shutdown. When a signal is received, the scan context is cancelled, causing all in-progress checks in `runScan()` to exit cleanly at their next `ctx.Done()` check. Partial results are still reported.
+
+```bash
+# Press Ctrl+C during a scan to trigger graceful shutdown
+./kshark -props client.properties -topic my-topic
+# ^C  ->  "received signal, cancelling scan"
+```
+
+### Environment Variable Expansion
+
+Properties files support `${VAR}` syntax for environment variable expansion via `os.ExpandEnv()`. This allows credentials and dynamic values to be injected at runtime without storing them in files.
+
+```properties
+# client.properties
+bootstrap.servers=${KAFKA_BOOTSTRAP_SERVERS}
+sasl.username=${KAFKA_USERNAME}
+sasl.password=${KAFKA_PASSWORD}
+schema.registry.url=${SR_URL}
+basic.auth.user.info=${SR_KEY}:${SR_SECRET}
+```
+
+```bash
+export KAFKA_USERNAME="my-api-key"
+export KAFKA_PASSWORD="my-secret"
+./kshark -props client.properties
+```
+
+### File Permission Warnings
+
+kshark warns when properties files have insecure permissions (readable by group or others). On startup, `warnInsecurePermissions()` checks the file mode and emits a warning if permissions are broader than `0600`.
+
+```
+Warning: client.properties has permissions 0644 (recommend 0600). Run: chmod 600 client.properties
+```
+
+This check is skipped on Windows where Unix file permissions do not apply.
 
 ---
 
@@ -754,6 +819,23 @@ Premium features require a valid `license.key` file.
 **Using preset:**
 ```bash
 ./kshark --preset cc-plain -props client.properties
+```
+
+**Connector probe (via Connect REST API):**
+```bash
+./kshark -connect-url https://connect.example.com:8083 \
+  -connector-name mongo-sink \
+  -connect-basic-auth admin:secret -y
+```
+
+**Connector probe (via local config file):**
+```bash
+./kshark -connector-config ./configs/mongo-sink.json -y
+```
+
+**Structured JSON logging:**
+```bash
+./kshark -props client.properties -log-format json -log /tmp/scan.json -y
 ```
 
 ---
@@ -1008,7 +1090,7 @@ MTU Check:
    # Reference in properties: ${KAFKA_PASSWORD}
    ```
 
-3. **Secure file permissions**
+3. **Secure file permissions** (kshark warns if permissions are too broad)
    ```bash
    chmod 600 client.properties
    chmod 600 ai_config.json
@@ -1124,7 +1206,7 @@ kafka-acls --list --principal User:your-username
 
 ---
 
-**Document Version:** 1.0
+**Document Version:** 1.1
 **Author:** kshark Development Team
-**Last Review:** 2025-11-13
-**Next Review:** 2025-12-13
+**Last Review:** 2026-03-26
+**Next Review:** 2026-06-26

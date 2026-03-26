@@ -1,7 +1,13 @@
+---
+layout: default
+title: Security
+nav_order: 5
+---
+
 # kshark Security Documentation
 
-**Version:** 1.0
-**Last Updated:** 2025-11-13
+**Version:** 2.0
+**Last Updated:** 2026-03-26
 **Security Audit:** OWASP Top 10:2021
 
 ---
@@ -58,225 +64,71 @@ Comprehensive audit performed against **OWASP Top 10:2021** standards.
 
 ### Security Scorecard
 
-| OWASP Category | Status | Score | Priority |
-|----------------|--------|-------|----------|
-| **A01 - Broken Access Control** | ✅ Secure | 9/10 | - |
-| **A02 - Cryptographic Failures** | ⚠️ Issues | 6/10 | HIGH |
-| **A03 - Injection** | ✅ Secure | 9/10 | - |
-| **A04 - Insecure Design** | ✅ Good | 8/10 | - |
-| **A05 - Security Misconfiguration** | ⚠️ Issues | 6/10 | MEDIUM |
-| **A06 - Vulnerable Components** | ⚠️ Review | 7/10 | MEDIUM |
-| **A07 - Authentication Failures** | ⚠️ Issues | 6/10 | HIGH |
-| **A08 - Data Integrity** | ⚠️ Issues | 7/10 | MEDIUM |
-| **A09 - Logging Failures** | ⚠️ Issues | 5/10 | HIGH |
-| **A10 - SSRF** | ⚠️ Critical | 4/10 | **CRITICAL** |
+| OWASP Category | Status | Score | Notes |
+|----------------|--------|-------|-------|
+| **A01 - Broken Access Control** | ✅ Secure | 9/10 | Path traversal protection, non-root Docker |
+| **A02 - Cryptographic Failures** | ✅ Good | 7/10 | TLS 1.2+ enforced, SHA256 checksums |
+| **A03 - Injection** | ✅ Secure | 9/10 | Hostname regex, pgQuote DSN quoting |
+| **A04 - Insecure Design** | ✅ Good | 8/10 | Layered architecture, credential separation |
+| **A05 - Security Misconfiguration** | ✅ Good | 7/10 | File permission warnings, env var support |
+| **A06 - Vulnerable Components** | ✅ Good | 8/10 | govulncheck in CI, Dependabot configured |
+| **A07 - Authentication Failures** | ✅ Good | 7/10 | Credential redaction, env var fallback |
+| **A08 - Data Integrity** | ✅ Good | 8/10 | SHA256 report checksums, prompt SHA256 |
+| **A09 - Logging** | ✅ Good | 8/10 | Structured slog logging (JSON/text) |
+| **A10 - SSRF** | ✅ Secure | 9/10 | Two-tier DENY/WARN model, redirect protection |
 
-**Overall Security Score: 6.7/10**
+**Overall Security Score: 8.0/10**
 
 ---
 
-## Critical Security Issues
+## Previously Critical Issues (Now Resolved)
 
-### 🔴 CRITICAL: Server-Side Request Forgery (SSRF)
+### SSRF Protection -- FIXED
 
-**Severity:** CRITICAL
-**CVSS Score:** 8.6 (High)
-**Location:** `cmd/kshark/main.go:761-799, 1136-1159`
+**Original Severity:** CRITICAL (CVSS 8.6)
+**Current Status:** RESOLVED (9/10)
+**Fix Location:** `cmd/kshark/ssrf.go` + `cmd/kshark/httpcheck.go`
 
-#### Problem Description
+#### What Was Fixed
 
-The application accepts arbitrary URLs from configuration files for Schema Registry and REST Proxy without validation. This allows potential attackers to:
-- Scan internal networks
-- Access cloud metadata services (e.g., AWS 169.254.169.254)
-- Probe internal services
-- Bypass firewall restrictions
+The original code accepted arbitrary URLs from configuration files for Schema Registry, REST Proxy, and the Connect API without validation, enabling internal network scanning, cloud metadata access, and service probing.
 
-#### Vulnerable Code
+#### Current Protection Model
 
-**Schema Registry Check (Lines 761-799):**
-```go
-func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string) {
-    url := strings.TrimSpace(p["schema.registry.url"])
-    if url == "" {
-        return
-    }
-    // ⚠️ NO URL VALIDATION - ACCEPTS ANY URL!
-    client := httpClientFromTLS(tlsConf, 8*time.Second)
-    req, _ := http.NewRequestWithContext(ctx, "GET",
-                                        strings.TrimRight(url, "/")+"/subjects", nil)
-    resp, err := client.Do(req)
-```
+A **two-tier SSRF protection model** is now implemented in `cmd/kshark/ssrf.go`:
 
-**REST Proxy Check (Lines 1136-1159):**
-```go
-if rest := strings.TrimSpace(props["rest.proxy.url"]); rest != "" {
-    // ⚠️ SAME VULNERABILITY - NO VALIDATION
-    client := httpClientFromTLS(tlsConf, 8*time.Second)
-    req, _ := http.NewRequest("GET", strings.TrimRight(rest, "/")+"/topics", nil)
-    resp, err := client.Do(req)
-```
+- **DENY (hard block):** Loopback (`127.0.0.0/8`, `::1`), link-local (`169.254.0.0/16`, `fe80::/10`), multicast, broadcast, and other reserved ranges. These are never legitimate targets for Kafka infrastructure.
+- **WARN (allow with warning):** RFC1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`). These are allowed because many Kafka clusters use AWS PrivateLink or VPC peering with private IPs.
+- **Redirect protection:** `CheckRedirect` handler validates each redirect destination against the same SSRF rules.
+- **Bounded reads:** All HTTP response bodies are limited via `io.LimitReader` (1MB) to prevent memory exhaustion.
+- **Scheme validation:** Only `http://` and `https://` schemes are permitted.
 
-#### Attack Scenarios
+#### Protected Surfaces
 
-**1. Internal Network Scanning:**
-```properties
-# Attacker-controlled configuration
-schema.registry.url=http://192.168.1.1:22
-rest.proxy.url=http://10.0.0.1:3306
-```
+All user-supplied URLs are validated before use:
+- Schema Registry URL (`schema.registry.url`)
+- REST Proxy URL (`rest.proxy.url`)
+- AI API endpoint URL
+- Kafka Connect REST API URL (`-connect-url`)
 
-**2. Cloud Metadata Service Access:**
-```properties
-schema.registry.url=http://169.254.169.254/latest/meta-data/
-```
+#### Test Coverage
 
-**3. Internal Service Probing:**
-```properties
-rest.proxy.url=http://localhost:6379  # Redis
-schema.registry.url=http://127.0.0.1:9200  # Elasticsearch
-```
+37 test cases across `cmd/kshark/ssrf_test.go`, `httpcheck_test.go`, `main_test.go`, and `ai_test.go` cover:
+- Loopback, link-local, metadata IPs (denied)
+- RFC1918 private ranges (warned)
+- Public IPs (allowed)
+- Invalid schemes, empty hosts, redirect chains
 
-#### Recommended Fix (IMMEDIATE)
+#### Validation Checklist (all completed)
 
-**Step 1: Add URL Validation Function**
-
-Create this function in `main.go`:
-
-```go
-// Add after line 817 (after mtuCheck function)
-
-// isAllowedURL validates that a URL is safe to access
-func isAllowedURL(rawURL string) error {
-    u, err := url.Parse(rawURL)
-    if err != nil {
-        return fmt.Errorf("invalid URL: %w", err)
-    }
-
-    // Only allow HTTP(S) schemes
-    if u.Scheme != "https" && u.Scheme != "http" {
-        return fmt.Errorf("only HTTP(S) schemes allowed, got: %s", u.Scheme)
-    }
-
-    // Resolve hostname to IP
-    host := u.Hostname()
-    if host == "" {
-        return fmt.Errorf("no hostname in URL")
-    }
-
-    // Resolve all IPs
-    ips, err := net.LookupIP(host)
-    if err != nil {
-        return fmt.Errorf("cannot resolve host %s: %w", host, err)
-    }
-
-    // Block private/internal IPs
-    for _, ip := range ips {
-        if isPrivateIP(ip) {
-            return fmt.Errorf("private/internal IP addresses not allowed: %s resolves to %s", host, ip)
-        }
-    }
-
-    return nil
-}
-
-// isPrivateIP checks if an IP is in private/reserved ranges
-func isPrivateIP(ip net.IP) bool {
-    // Private IP ranges to block
-    privateRanges := []string{
-        "10.0.0.0/8",          // RFC1918
-        "172.16.0.0/12",       // RFC1918
-        "192.168.0.0/16",      // RFC1918
-        "127.0.0.0/8",         // Loopback
-        "169.254.0.0/16",      // Link-local (AWS metadata)
-        "::1/128",             // IPv6 loopback
-        "fc00::/7",            // IPv6 private
-        "fe80::/10",           // IPv6 link-local
-        "0.0.0.0/8",           // Current network
-        "100.64.0.0/10",       // Shared address space
-        "192.0.0.0/24",        // IETF protocol assignments
-        "192.0.2.0/24",        // TEST-NET-1
-        "198.18.0.0/15",       // Benchmarking
-        "198.51.100.0/24",     // TEST-NET-2
-        "203.0.113.0/24",      // TEST-NET-3
-        "224.0.0.0/4",         // Multicast
-        "240.0.0.0/4",         // Reserved
-        "255.255.255.255/32",  // Broadcast
-    }
-
-    for _, cidr := range privateRanges {
-        _, subnet, _ := net.ParseCIDR(cidr)
-        if subnet.Contains(ip) {
-            return true
-        }
-    }
-    return false
-}
-```
-
-**Step 2: Add Redirect Protection**
-
-Update `httpClientFromTLS` function (Line 756):
-
-```go
-func httpClientFromTLS(tlsConf *tls.Config, timeout time.Duration) *http.Client {
-    tr := &http.Transport{
-        TLSClientConfig: tlsConf,
-        Proxy: http.ProxyFromEnvironment,
-        IdleConnTimeout: 10 * time.Second,
-    }
-
-    return &http.Client{
-        Transport: tr,
-        Timeout: timeout,
-        // ✅ ADD THIS: Validate redirects
-        CheckRedirect: func(req *http.Request, via []*http.Request) error {
-            if len(via) >= 3 {
-                return fmt.Errorf("too many redirects (max 3)")
-            }
-            // Validate redirect URL
-            if err := isAllowedURL(req.URL.String()); err != nil {
-                return fmt.Errorf("redirect blocked: %w", err)
-            }
-            return nil
-        },
-    }
-}
-```
-
-**Step 3: Apply Validation in Checks**
-
-Update `checkSchemaRegistry` (Line 761):
-
-```go
-func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string, tlsConf *tls.Config) {
-    url := strings.TrimSpace(p["schema.registry.url"])
-    if url == "" {
-        return
-    }
-
-    // ✅ ADD THIS: Validate URL before use
-    if err := isAllowedURL(url); err != nil {
-        addRow(r, Row{"schema-registry", url, L7HTTP, FAIL,
-                     fmt.Sprintf("URL validation failed: %v", err),
-                     "Schema Registry URL must be a valid HTTPS URL to a public endpoint"})
-        return
-    }
-
-    // Rest of function remains the same...
-```
-
-Update REST Proxy check similarly (Line 1136).
-
-#### Validation Checklist
-
-- [ ] Implement `isAllowedURL()` function
-- [ ] Implement `isPrivateIP()` function
-- [ ] Add redirect validation to `httpClientFromTLS()`
-- [ ] Update `checkSchemaRegistry()` to validate URLs
-- [ ] Update REST Proxy check to validate URLs
-- [ ] Add configuration option to allow internal IPs (if needed)
-- [ ] Test with various malicious URLs
-- [ ] Document URL validation in configuration guide
+- [x] Implement `isAllowedURL()` function -- `cmd/kshark/ssrf.go`
+- [x] Implement IP classification (`classifyIP()`) -- `cmd/kshark/ssrf.go`
+- [x] Add redirect validation to `httpClientFromTLS()` -- `checkRedirectSSRF`
+- [x] Update `checkSchemaRegistry()` to validate URLs
+- [x] Update REST Proxy check to validate URLs
+- [x] RFC1918 allowed for PrivateLink (WARN, not DENY)
+- [x] Test with various malicious URLs -- 37 SSRF test cases across 4 test files + 1 fuzz target
+- [x] Document URL validation in configuration guide
 
 #### Testing
 
@@ -313,7 +165,8 @@ schema.registry.url=https://schema-registry.example.com
 Credentials are stored in plain text in configuration files:
 - `client.properties` - Kafka credentials
 - `ai_config.json` - AI provider API keys
-- No file permission validation
+- File permission validation now warns on insecure permissions (`warnInsecurePermissions`)
+- Environment variable expansion (`${VAR}`) available to avoid storing secrets in files
 - No encryption at rest
 
 #### Vulnerable Files
@@ -451,173 +304,54 @@ func getSecretFromAWS(secretName string) (string, error) {
 
 #### Implementation Priority
 
-1. ✅ **Immediate:** Add environment variable support (1-2 hours)
-2. ✅ **This Sprint:** Add file permission validation (1 hour)
+1. ✅ **Done:** Environment variable support -- `os.ExpandEnv()` in `loadProperties()`, `${VAR}` syntax
+2. ✅ **Done:** File permission validation -- `warnInsecurePermissions()` warns on mode > 0600
 3. 📅 **Next Sprint:** Document secret manager integration patterns
 4. 📅 **Future:** Implement built-in encryption support
 
 ---
 
-### 🟠 HIGH: Insufficient Security Logging
+### Structured Security Logging -- FIXED
 
-**Severity:** HIGH
-**CVSS Score:** 6.5 (Medium)
-**Location:** Throughout `main.go`
+**Original Severity:** HIGH (CVSS 6.5)
+**Current Status:** RESOLVED (8/10)
+**Fix Location:** `cmd/kshark/util.go` (logger init), throughout all source files
 
-#### Problem Description
+#### What Was Fixed
 
-No audit logging for security-relevant events:
-- No logs for authentication attempts
-- No logs for file access operations
-- No logs for configuration loading
-- No logs for API key usage
-- No structured logging format
+Structured logging via Go's `log/slog` is now integrated throughout the application:
+- `--log-format text|json` flag selects output format
+- `--log` flag writes scan logs to a file (default: `reports/kshark-<timestamp>.log`)
+- All security-relevant events are logged with structured key-value pairs
+- Log files include SHA256 checksums in the JSON report for integrity verification
 
-#### Impact
-
-- Cannot detect security incidents
-- Cannot investigate breaches
-- Cannot meet compliance requirements
-- Difficult to debug security issues
-
-#### Recommended Solution
-
-**Step 1: Implement Structured Logging**
-
-Use Go's `log/slog` (available in Go 1.21+):
-
-```go
-import (
-    "log/slog"
-    "os"
-)
-
-// Global logger
-var logger *slog.Logger
-
-func init() {
-    // JSON structured logging
-    handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-        Level: slog.LevelInfo,
-    })
-    logger = slog.New(handler)
-}
-```
-
-**Step 2: Log Security Events**
-
-```go
-// After loading configuration (Line 1018)
-logger.Info("configuration loaded",
-    "file", *propsFile,
-    "properties_count", len(props),
-    "user", os.Getenv("USER"),
-    "timestamp", time.Now())
-
-// Before Kafka connection (Line 1084)
-logger.Info("kafka connection attempt",
-    "broker", host,
-    "security_protocol", props["security.protocol"],
-    "sasl_mechanism", props["sasl.mechanism"],
-    "username", props["sasl.username"])  // Don't log password!
-
-// After successful authentication
-logger.Info("kafka authentication successful",
-    "broker", host,
-    "mechanism", props["sasl.mechanism"])
-
-// On authentication failure
-logger.Error("kafka authentication failed",
-    "broker", host,
-    "mechanism", props["sasl.mechanism"],
-    "error", err)
-
-// AI API usage (Line 165)
-logger.Info("ai api request",
-    "provider", c.config.Provider,
-    "endpoint", c.config.APIEndpoint,
-    "model", c.config.Model)
-```
-
-**Step 3: Log File Access**
-
-```go
-// In loadProperties (Line 346)
-logger.Info("loading configuration file",
-    "path", path,
-    "size", info.Size())
-
-// In checkLicense (Line 232)
-logger.Info("license validation",
-    "file", "license.key",
-    "valid", true/false)
-```
-
-#### Example Log Output
+#### Example Log Output (JSON mode)
 
 ```json
-{"time":"2025-01-13T14:30:22Z","level":"INFO","msg":"configuration loaded","file":"client.properties","properties_count":8,"user":"admin"}
-{"time":"2025-01-13T14:30:23Z","level":"INFO","msg":"kafka connection attempt","broker":"broker.example.com:9092","security_protocol":"SASL_SSL","sasl_mechanism":"SCRAM-SHA-256"}
-{"time":"2025-01-13T14:30:24Z","level":"INFO","msg":"kafka authentication successful","broker":"broker.example.com:9092","mechanism":"SCRAM-SHA-256"}
-{"time":"2025-01-13T14:30:25Z","level":"ERROR","msg":"tls handshake failed","broker":"broker.example.com:9092","error":"certificate expired"}
+{"time":"2026-03-26T14:30:22Z","level":"DEBUG","msg":"scan start","props":"client.properties","timeout":"1m0s","kafka_timeout":"10s"}
+{"time":"2026-03-26T14:30:23Z","level":"DEBUG","msg":"broker check start","host":"broker.example.com","port":"9092"}
+{"time":"2026-03-26T14:30:24Z","level":"DEBUG","msg":"broker check ok","addr":"broker.example.com:9092"}
+{"time":"2026-03-26T14:30:25Z","level":"DEBUG","msg":"rest proxy URL warning","warning":"RFC1918 address"}
 ```
 
 ---
 
 ## Medium Priority Issues
 
-### 🟡 MEDIUM: Error Message Information Disclosure
+### Error Message Information Disclosure -- MITIGATED
 
-**Severity:** MEDIUM
-**CVSS Score:** 5.3 (Medium)
-**Location:** `main.go:174, 190`
+**Severity:** MEDIUM (originally)
+**Current Status:** MITIGATED
+**Location:** `cmd/kshark/ai.go`
 
-#### Problem
-
-Verbose error messages expose internal details:
-
-```go
-// Line 174
-if resp.StatusCode != http.StatusOK {
-    body, _ := io.ReadAll(resp.Body)
-    return nil, fmt.Errorf("AI API returned a non-200 status code: %d %s",
-                          resp.StatusCode, string(body))
-    // ⚠️ Exposes full API error response
-}
-
-// Line 190
-return nil, fmt.Errorf("could not unmarshal AI JSON response: %w. Raw response: %s",
-                      err, apiResp.Choices[0].Message.Content)
-// ⚠️ Exposes raw AI response content
-```
-
-#### Recommended Fix
-
-```go
-// Line 174
-if resp.StatusCode != http.StatusOK {
-    body, _ := io.ReadAll(resp.Body)
-    // ✅ Log full error, return sanitized message
-    logger.Error("ai api error",
-                 "status_code", resp.StatusCode,
-                 "response_body", string(body))
-    return nil, fmt.Errorf("AI API request failed with status %d", resp.StatusCode)
-}
-
-// Line 190
-// ✅ Log full error, return generic message
-logger.Error("ai response parse error",
-             "error", err,
-             "raw_response", apiResp.Choices[0].Message.Content)
-return nil, fmt.Errorf("failed to parse AI response: %w", err)
-```
+AI API error responses no longer expose raw response bodies to users. Full error details are logged to the structured log file (accessible only to the operator), while user-facing messages show only the HTTP status code. Connector credential values are scrubbed from database probe error messages via `ScrubCredentials()` in `internal/connectapi/redact.go`.
 
 ---
 
 ### 🟡 MEDIUM: Weak API Key Validation
 
 **Severity:** MEDIUM
-**Location:** `main.go:1198-1201`
+**Location:** `cmd/kshark/main.go`
 
 #### Problem
 
@@ -826,15 +560,16 @@ sasl.mechanism=PLAIN
 #### 1. Input Validation
 
 All user input must be validated:
-- ✅ Hostname validation (implemented)
-- ✅ Path traversal prevention (implemented)
-- ⚠️ URL validation (needs implementation)
+- ✅ Hostname validation (implemented in `cmd/kshark/diagnostics.go`)
+- ✅ Path traversal prevention (implemented in `cmd/kshark/report.go`)
+- ✅ URL validation / SSRF protection (implemented in `cmd/kshark/ssrf.go`)
 
 #### 2. Credential Handling
 
 - ✅ Redact credentials in all outputs
 - ✅ Never log passwords
-- ⚠️ Implement secret rotation support
+- ✅ Environment variable fallback for connector credentials
+- ✅ Database probe error messages scrubbed of credentials
 
 #### 3. Dependency Management
 
@@ -849,13 +584,13 @@ govulncheck ./...
 
 #### 4. Code Review Checklist
 
-- [ ] No hardcoded credentials
-- [ ] All user input validated
-- [ ] Errors don't leak sensitive data
-- [ ] TLS used for all external connections
-- [ ] Credentials redacted in logs
-- [ ] File permissions checked
-- [ ] URLs validated before use
+- [x] No hardcoded credentials
+- [x] All user input validated
+- [x] Errors don't leak sensitive data
+- [x] TLS used for all external connections
+- [x] Credentials redacted in logs
+- [x] File permissions checked (warning on group/other readable)
+- [x] URLs validated before use (SSRF two-tier model)
 
 ---
 
@@ -925,7 +660,7 @@ services:
 
 **Instead, please:**
 
-1. **Email:** security@your-org.com
+1. **Email:** security@scalytics.io
 2. **Subject:** [SECURITY] kshark vulnerability report
 3. **Include:**
    - Description of the vulnerability
@@ -950,68 +685,60 @@ Security advisories are published at:
 
 ## Security Roadmap
 
-### Immediate (Sprint 1)
+### Completed
 
-- [ ] **CRITICAL:** Implement SSRF protection
-  - [ ] Add `isAllowedURL()` function
-  - [ ] Add `isPrivateIP()` function
-  - [ ] Update Schema Registry check
-  - [ ] Update REST Proxy check
-  - [ ] Add redirect validation
+- [x] **CRITICAL:** SSRF protection (two-tier DENY/WARN model in `cmd/kshark/ssrf.go`)
+  - [x] `isAllowedURL()` with full CIDR classification
+  - [x] `classifyIP()` with 14 deny + 4 warn ranges
+  - [x] Schema Registry URL validation
+  - [x] REST Proxy URL validation
+  - [x] AI endpoint URL validation
+  - [x] Redirect-based SSRF prevention (`checkRedirectSSRF`)
 
-- [ ] **HIGH:** Environment variable support
-  - [ ] Update `loadProperties()` function
-  - [ ] Document usage
-  - [ ] Update example files
+- [x] **HIGH:** Environment variable support
+  - [x] `os.ExpandEnv()` in `loadProperties()` -- `${VAR}` syntax works
+  - [x] `KSHARK_CONNECT_AUTH` / `KSHARK_CONNECT_TOKEN` env var fallback
 
-- [ ] **HIGH:** File permission validation
-  - [ ] Add permission check function
-  - [ ] Warn on insecure permissions
-  - [ ] Document secure permissions
+- [x] **HIGH:** File permission validation
+  - [x] `warnInsecurePermissions()` warns on group/other readable files
+  - [x] Documented in Security Best Practices
 
-### Short-term (Sprint 2-3)
+- [x] **HIGH:** Structured security logging
+  - [x] `log/slog` integration with JSON/text handlers
+  - [x] `--log-format json|text` flag
+  - [x] All security events logged with structured key-value pairs
 
-- [ ] **HIGH:** Structured security logging
-  - [ ] Implement slog integration
-  - [ ] Log authentication events
-  - [ ] Log file access events
-  - [ ] Log API usage
+- [x] **MEDIUM:** Dependency scanning automation
+  - [x] `govulncheck` in CI pipeline (every push + weekly)
+  - [x] Dependabot for Go modules and GitHub Actions
+  - [x] `golangci-lint` with `gosec` in CI
 
-- [ ] **MEDIUM:** Error message sanitization
-  - [ ] Remove sensitive data from errors
-  - [ ] Implement error filtering
-  - [ ] Update error handling
+- [x] **MEDIUM:** Error message sanitization
+  - [x] AI API errors no longer expose response body
+  - [x] CLI args redacted in report metadata (`redactArgs()`)
+  - [x] Connector credentials scrubbed from error messages
 
-- [ ] **MEDIUM:** API key validation
-  - [ ] Provider-specific validation
-  - [ ] Format verification
-  - [ ] Optional key verification API calls
+- [x] **LOW:** Fuzz testing for security-critical parsers
+  - [x] `auth_fuzz_test.go` -- SASL credential parsing
+  - [x] `properties_fuzz_test.go` -- Properties file parsing with env var expansion
+  - [x] `ssrf_fuzz_test.go` -- URL validation and IP classification
+  - [x] `jdbc_url_fuzz_test.go` -- JDBC URL parsing (DB2, PostgreSQL)
 
-### Mid-term (Next Quarter)
+- [x] **MEDIUM:** CI quality gates
+  - [x] `.golangci.yml` with `gosec` security linter
+  - [x] Coverage gate in CI pipeline
+  - [x] `govulncheck` in weekly security scan workflow (`security.yml`)
 
-- [ ] **MEDIUM:** Dependency scanning automation
-  - [ ] Add govulncheck to CI/CD
-  - [ ] Configure Dependabot
-  - [ ] Set up automated updates
+- [x] **MEDIUM:** Graceful signal handling
+  - [x] SIGINT/SIGTERM cancel scan context via `signal.Notify`
+  - [x] All scan phases guarded by `ctx.Done()` in `runScan()`
 
-- [ ] **MEDIUM:** Secret manager integration
-  - [ ] AWS Secrets Manager support
-  - [ ] HashiCorp Vault support
-  - [ ] Azure Key Vault support
+### Remaining
 
-- [ ] **LOW:** Security testing
-  - [ ] Add security test suite
-  - [ ] Implement fuzzing
-  - [ ] Add integration tests
-
-### Long-term (Future)
-
-- [ ] Configuration file encryption
-- [ ] Certificate pinning support
-- [ ] Automated credential rotation
-- [ ] Security metrics export (Prometheus)
-- [ ] SIEM integration support
-- [ ] SOC 2 compliance documentation
+- [ ] **MEDIUM:** Secret manager integration (AWS/Vault/Azure)
+- [ ] **LOW:** Configuration file encryption
+- [ ] **LOW:** Certificate pinning
+- [ ] **LOW:** SBOM generation and release signing
 
 ---
 
@@ -1048,53 +775,54 @@ Security advisories are published at:
 
 These controls should be **maintained** in all future versions:
 
-1. ✅ **Command Injection Prevention** (Lines 829-840)
-   ```go
-   func isValidHostname(host string) bool {
-       re := regexp.MustCompile(`^[a-zA-Z0-9\.\-]+$`)
-       return re.MatchString(host)
-   }
-   ```
+1. ✅ **SSRF Two-Tier Protection** (`cmd/kshark/ssrf.go`)
+   - DENY loopback/link-local/metadata, WARN RFC1918
+   - Redirect-based bypass prevention
+   - Bounded HTTP reads (1MB)
 
-2. ✅ **Credential Redaction** (Lines 1339-1350)
-   ```go
-   func redactProps(p map[string]string) map[string]string {
-       // Redacts: password, secret, token, key, auth info
-   }
-   ```
+2. ✅ **Structured slog Logging** (`cmd/kshark/util.go`)
+   - JSON or text format via `--log-format`
+   - All security events logged with structured key-value pairs
+   - Log file SHA256 checksums in report
 
-3. ✅ **Path Traversal Prevention** (Lines 1297-1316)
-   ```go
-   func createSafeReportPath(userInputPath string, safeSubDir string) (string, error) {
-       cleanFilename := filepath.Base(userInputPath)
-       // Prevents ../../../etc/passwd attacks
-   }
-   ```
+3. ✅ **Command Injection Prevention** (`cmd/kshark/diagnostics.go`)
+   - `isValidHostname()` regex validation before shell commands
 
-4. ✅ **TLS Enforcement** (Line 424)
-   ```go
-   conf := &tls.Config{MinVersion: tls.VersionTLS12}
-   ```
+4. ✅ **Credential Redaction** (`cmd/kshark/util.go`, `internal/connectapi/redact.go`)
+   - Redacts: password, secret, token, key, bearer, JAAS config, auth info
+   - `ScrubCredentials()` for database probe error messages
+   - `redactArgs()` for CLI arguments in report metadata
 
-5. ✅ **Certificate Expiry Monitoring** (Lines 467-475)
+5. ✅ **Path Traversal Prevention** (`cmd/kshark/report.go`)
+   - `createSafeReportPath()` uses `filepath.Base()` to strip directory components
 
-6. ✅ **Timeout Controls** - All network operations have timeouts
+6. ✅ **TLS Enforcement** (`cmd/kshark/tls.go`)
+   - `tls.Config{MinVersion: tls.VersionTLS12}` on all TLS connections
 
-7. ✅ **Context Usage** - Proper context propagation for cancellation
+7. ✅ **Certificate Expiry Monitoring** (`cmd/kshark/tls.go`)
 
-8. ✅ **Non-root Docker User** (Dockerfile)
+8. ✅ **SHA256 Checksums** (`cmd/kshark/util.go`)
+   - Report files, log files, and analysis prompts all have SHA256 checksums
 
-9. ✅ **HTML Template Auto-escaping** (Go html/template)
+9. ✅ **Timeout Controls** - All network operations have configurable timeouts
 
-10. ✅ **Minimal GitHub Actions Permissions**
+10. ✅ **Context Usage** - Proper context propagation for cancellation via `runScan(ctx, report, scanConfig{})`
 
-11. ✅ **Release Checksum Generation** (.goreleaser.yaml)
+16. ✅ **Signal Handling** - SIGINT/SIGTERM gracefully cancel scan context; all phases exit at next `ctx.Done()` check
 
-12. ✅ **Safe JSON Deserialization** (No reflection attacks)
+11. ✅ **Non-root Docker User** (Dockerfile)
+
+12. ✅ **HTML Template Auto-escaping** (Go html/template)
+
+13. ✅ **Minimal GitHub Actions Permissions**
+
+14. ✅ **Release Checksum Generation** (.goreleaser.yaml)
+
+15. ✅ **Safe JSON Deserialization** (No reflection attacks)
 
 ---
 
-**Document Version:** 1.0
-**Security Audit Date:** 2025-11-13
-**Next Security Review:** 2025-12-13
-**Contact:** security@your-org.com
+**Document Version:** 2.0
+**Security Audit Date:** 2026-03-26
+**Next Security Review:** 2026-06-26
+**Contact:** security@scalytics.io

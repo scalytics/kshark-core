@@ -29,11 +29,34 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
       - name: Build
-        run: go build -o kshark ./cmd/kshark
+        run: CGO_ENABLED=0 go build -o kshark ./cmd/kshark
 
       - name: Test
-        run: go test ./... -v -race -timeout 120s
+        run: go test ./... -v -race -timeout 120s -coverprofile=coverage.out
+
+      - name: Coverage report
+        run: go tool cover -func=coverage.out
+
+      - name: Coverage gate
+        run: |
+          TOTAL=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print substr($3, 1, length($3)-1)}')
+          echo "Total coverage: ${TOTAL}%"
+          THRESHOLD=40
+          if [ "$(echo "$TOTAL < $THRESHOLD" | bc)" -eq 1 ]; then
+            echo "::error::Coverage ${TOTAL}% is below ${THRESHOLD}% minimum"
+            exit 1
+          fi
+
+      - name: Vulnerability check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   release:
     name: Release
@@ -43,6 +66,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write  # Required for keyless cosign signing via GitHub OIDC
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +77,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft (SBOM generator)
+        uses: anchore/sbom-action/download-syft@v0
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5

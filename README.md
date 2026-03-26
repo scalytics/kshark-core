@@ -11,7 +11,7 @@
 
 ---
 
-## Built for AI Agents and Teams of Collaborationg Experts
+## Built for AI Agents and Teams of Collaborating Experts
 
 **Tools are the difference between AI assistants and AI operators.**
 
@@ -182,19 +182,19 @@ EOF
 
 ### Option 1: Download Pre-built Binary (Recommended)
 
-Download the latest release for your platform from the [Releases page](https://github.com/your-org/kshark-core/releases):
+Download the latest release for your platform from the [Releases page](https://github.com/scalytics/kshark-core/releases):
 
 ```bash
 # Linux (amd64)
-wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
 tar -xzf kshark-linux-amd64.tar.gz
 
 # macOS (arm64 - Apple Silicon)
-wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-darwin-arm64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-darwin-arm64.tar.gz
 tar -xzf kshark-darwin-arm64.tar.gz
 
 # Windows (amd64)
-wget https://github.com/your-org/kshark-core/releases/latest/download/kshark-windows-amd64.zip
+wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-windows-amd64.zip
 unzip kshark-windows-amd64.zip
 ```
 
@@ -209,7 +209,7 @@ sha256sum -c checksums.txt
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-org/kshark-core.git
+git clone https://github.com/scalytics/kshark-core.git
 cd kshark-core
 
 # Build
@@ -223,7 +223,7 @@ go build -o kshark ./cmd/kshark
 
 ```bash
 # Pull the image (when published)
-docker pull your-registry/kshark:latest
+docker pull ghcr.io/scalytics/kshark-core:latest
 
 # Or build locally
 docker build -t kshark:latest .
@@ -482,7 +482,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - **Feature Documentation:** [docs/FEATURES.md](docs/FEATURES.md)
 - **Deployment Guide:** [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - **Security Best Practices:** [docs/SECURITY.md](docs/SECURITY.md)
-- **API Documentation:** [GoDoc](https://pkg.go.dev/github.com/your-org/kshark-core)
+- **API Documentation:** [GoDoc](https://pkg.go.dev/github.com/scalytics/kshark-core)
 
 ---
 
@@ -703,7 +703,7 @@ We welcome contributions! Please see our contributing guidelines:
 
 ```bash
 # Clone your fork
-git clone https://github.com/your-username/kshark-core.git
+git clone https://github.com/scalytics/kshark-core.git
 cd kshark-core
 
 # Install dependencies
@@ -798,8 +798,8 @@ limitations under the License.
 ## Support
 
 - **Documentation:** [docs/](docs/)
-- **Issues:** [GitHub Issues](https://github.com/your-org/kshark-core/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/your-org/kshark-core/discussions)
+- **Issues:** [GitHub Issues](https://github.com/scalytics/kshark-core/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/scalytics/kshark-core/discussions)
 
 ---
 
