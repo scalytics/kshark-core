@@ -34,9 +34,6 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 
 **Made with ❤️ for the Kafka community**
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
-
 ---
 
 ## Table of Contents
