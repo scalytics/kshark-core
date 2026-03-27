@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseTopics(t *testing.T) {
@@ -649,3 +651,251 @@ func TestLayeredExitCode_EmptyReport(t *testing.T) {
 		t.Errorf("layeredExitCode() = %d, want 1 (fallback for empty report)", got)
 	}
 }
+
+// ---------- runScan integration tests ----------
+
+func TestRunScan_SingleBroker_DNSFailure(t *testing.T) {
+	report := &Report{}
+	cfg := scanConfig{
+		props:     map[string]string{},
+		bootstrap: "this.host.does.not.exist.kshark.invalid:9092",
+		diag:      false,
+	}
+	runScan(context.Background(), report, cfg)
+
+	// Should have a DNS failure row
+	hasDNS := false
+	for _, row := range report.Rows {
+		if row.Layer == L3 && row.Status == FAIL {
+			hasDNS = true
+			break
+		}
+	}
+	if !hasDNS {
+		t.Error("expected L3 DNS FAIL row for unresolvable host")
+		for _, row := range report.Rows {
+			t.Logf("  row: layer=%s status=%s detail=%q", row.Layer, row.Status, row.Detail)
+		}
+	}
+}
+
+func TestRunScan_SingleBroker_TCPOpenPort(t *testing.T) {
+	// Start a TCP listener to simulate a reachable broker
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Close immediately (not a real Kafka broker)
+			conn.Close()
+		}
+	}()
+
+	report := &Report{}
+	cfg := scanConfig{
+		props:          map[string]string{"security.protocol": "PLAINTEXT"},
+		bootstrap:      ln.Addr().String(),
+		kafkaTimeout:   2 * time.Second,
+		diag:           false,
+		probeDirection: "up",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	runScan(ctx, report, cfg)
+
+	// Should have DNS OK and TCP OK for localhost
+	hasL3OK := false
+	hasL4OK := false
+	for _, row := range report.Rows {
+		if row.Layer == L3 && row.Status == OK {
+			hasL3OK = true
+		}
+		if row.Layer == L4 && row.Status == OK {
+			hasL4OK = true
+		}
+	}
+	if !hasL3OK {
+		t.Error("expected L3 DNS OK row for localhost")
+	}
+	if !hasL4OK {
+		t.Error("expected L4 TCP OK row for open port")
+	}
+}
+
+func TestRunScan_MultipleBrokers_InvalidFormat(t *testing.T) {
+	report := &Report{}
+	cfg := scanConfig{
+		props:     map[string]string{},
+		bootstrap: "valid-host:9092,invalid-no-port,another:9093",
+		diag:      false,
+	}
+	runScan(context.Background(), report, cfg)
+
+	// Should have a FAIL row for the invalid broker format
+	found := false
+	for _, row := range report.Rows {
+		if row.Status == FAIL && strings.Contains(row.Detail, "host:port") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected FAIL row for invalid broker format in multi-broker list")
+	}
+}
+
+func TestRunScan_FullMode_ContinuesAfterFailure(t *testing.T) {
+	// Get a closed port
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	closedAddr := ln.Addr().String()
+	ln.Close()
+
+	report := &Report{}
+	cfg := scanConfig{
+		props:          map[string]string{},
+		bootstrap:      closedAddr,
+		topics:         []string{"test-topic"},
+		probeDirection: "full",
+		diag:           false,
+		kafkaTimeout:   2 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	runScan(ctx, report, cfg)
+
+	// In full mode, should have attempted DNS and TCP (TCP will fail)
+	hasL3 := false
+	hasL4Fail := false
+	for _, row := range report.Rows {
+		if row.Layer == L3 {
+			hasL3 = true
+		}
+		if row.Layer == L4 && row.Status == FAIL {
+			hasL4Fail = true
+		}
+	}
+	if !hasL3 {
+		t.Error("expected L3 row even in full mode")
+	}
+	if !hasL4Fail {
+		t.Error("expected L4 FAIL row for closed port")
+	}
+}
+
+func TestRunScan_TimeoutDuringBrokerChecks(t *testing.T) {
+	report := &Report{}
+	cfg := scanConfig{
+		props:     map[string]string{},
+		bootstrap: "192.0.2.1:9092,192.0.2.2:9092",
+		diag:      false,
+	}
+
+	// Very short timeout to trigger during broker loop
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	runScan(ctx, report, cfg)
+
+	// Should have at least started and potentially hit timeout
+	// The exact behavior depends on timing, but it shouldn't hang
+}
+
+func TestRunScan_DiagnosticsParallel(t *testing.T) {
+	// Start a TCP listener
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	report := &Report{}
+	cfg := scanConfig{
+		props:          map[string]string{"security.protocol": "PLAINTEXT"},
+		bootstrap:      ln.Addr().String(),
+		diag:           true,
+		kafkaTimeout:   2 * time.Second,
+		probeDirection: "up",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runScan(ctx, report, cfg)
+
+	// Diagnostics should have produced some rows (traceroute and/or MTU)
+	hasDiag := false
+	for _, row := range report.Rows {
+		if row.Layer == DIAG && row.Component == "diag" {
+			hasDiag = true
+			break
+		}
+	}
+	if !hasDiag {
+		t.Log("No diagnostic rows found — traceroute/ping tools may not be available on this system")
+	}
+}
+
+func TestRunScan_NeighborhoodOnTCPFailure(t *testing.T) {
+	// Get a closed port
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	closedAddr := ln.Addr().String()
+	ln.Close()
+
+	report := &Report{}
+	cfg := scanConfig{
+		props:          map[string]string{},
+		bootstrap:      closedAddr,
+		diag:           true,
+		neighborhood:   false, // auto-triggered by diag=true on TCP failure
+		probeDirection: "up",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	runScan(ctx, report, cfg)
+
+	// Should have neighborhood scan rows
+	hasNeighborhood := false
+	for _, row := range report.Rows {
+		if row.Component == "neighborhood" {
+			hasNeighborhood = true
+			break
+		}
+	}
+	if !hasNeighborhood {
+		t.Log("No neighborhood rows found — may depend on TCP failure mode and timing")
+	}
+}
+
+func TestRunScan_ConnectorOnly(t *testing.T) {
+	report := &Report{}
+	cfg := scanConfig{
+		props:     map[string]string{},
+		bootstrap: "", // no Kafka brokers
+		diag:      false,
+	}
+	runScan(context.Background(), report, cfg)
+	// Should complete without error for connector-only mode
+	// No broker rows expected
+	for _, row := range report.Rows {
+		if row.Component == "kafka" {
+			t.Error("unexpected kafka row in connector-only mode")
+		}
+	}
+}
+

@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -28,9 +29,10 @@ import (
 
 // ---------- DNS, TCP, TLS ----------
 
-func checkDNS(r *Report, host string, component string) {
+func checkDNS(ctx context.Context, r *Report, host string, component string) {
 	start := time.Now()
-	_, err := net.LookupHost(host)
+	resolver := net.DefaultResolver
+	_, err := resolver.LookupHost(ctx, host)
 	slog.Debug("dns lookup", "host", host, "dur", time.Since(start).Truncate(time.Millisecond), "err", err)
 	if err != nil {
 		addRow(r, Row{component, host, L3, FAIL, fmt.Sprintf("DNS lookup failed: %v", err),
@@ -40,9 +42,10 @@ func checkDNS(r *Report, host string, component string) {
 	}
 }
 
-func checkTCP(r *Report, addr string, component string, timeout time.Duration) net.Conn {
+func checkTCP(ctx context.Context, r *Report, addr string, component string, timeout time.Duration) net.Conn {
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		slog.Debug("tcp connect", "addr", addr, "dur", time.Since(start).Truncate(time.Millisecond), "err", err)
 		addRow(r, Row{component, addr, L4, FAIL, fmt.Sprintf("TCP connect failed: %v", err),
@@ -94,7 +97,7 @@ func tlsConfigFromProps(p map[string]string, serverName string) (*tls.Config, st
 	return conf, desc, nil
 }
 
-func wrapTLS(r *Report, base net.Conn, tlsConf *tls.Config, component, addr string) net.Conn {
+func wrapTLS(ctx context.Context, r *Report, base net.Conn, tlsConf *tls.Config, component, addr string) net.Conn {
 	if tlsConf == nil {
 		addRow(r, Row{component, addr, L56, SKIP, "TLS not configured (PLAINTEXT)", "Prefer SSL/SASL_SSL for encryption."})
 		return base

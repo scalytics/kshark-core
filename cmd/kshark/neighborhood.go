@@ -94,23 +94,10 @@ func portNeighborhoodScan(host string, _ int, ports []int, totalTimeout time.Dur
 		go func() {
 			defer wg.Done()
 
-			select {
-			case <-ctx.Done():
-				mu.Lock()
-				results = append(results, PortProbeResult{
-					Port:    p,
-					Status:  FAIL,
-					Detail:  "scan timeout",
-					Service: portServiceMap[p],
-				})
-				mu.Unlock()
-				return
-			default:
-			}
-
 			addr := net.JoinHostPort(host, strconv.Itoa(p))
 			start := time.Now()
-			conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+			dialer := net.Dialer{Timeout: 3 * time.Second}
+			conn, err := dialer.DialContext(ctx, "tcp", addr)
 			elapsed := time.Since(start)
 
 			r := PortProbeResult{
