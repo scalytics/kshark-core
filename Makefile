@@ -3,7 +3,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: all build test vet clean snapshot release releaseminor docker scan help
+.PHONY: all build test vet clean snapshot release releasepatch releaseminor releasemajor docker scan help
 
 all: vet build ## Run vet then build
 
@@ -23,7 +23,9 @@ clean: ## Remove build artifacts
 snapshot: ## Build a local snapshot release (no publish)
 	goreleaser release --snapshot --clean
 
-release: ## Auto-bump patch version, commit, tag, and push to trigger CI release
+release: releasepatch ## Alias for releasepatch (default: bump patch version)
+
+releasepatch: ## Auto-bump patch version, commit, tag, and push to trigger CI release
 	@LATEST=$$(git tag --list 'v*' --sort=-v:refname | head -1); \
 	if [ -z "$$LATEST" ]; then \
 		NEXT="v0.1.0"; \
@@ -60,6 +62,32 @@ releaseminor: ## Auto-bump minor version, commit, tag, and push to trigger CI re
 		MINOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f2); \
 		MINOR=$$((MINOR + 1)); \
 		NEXT="v$$MAJOR.$$MINOR.0"; \
+	fi; \
+	echo "Latest tag: $${LATEST:-none}"; \
+	echo "Next tag:   $$NEXT"; \
+	echo ""; \
+	read -p "Create and push tag $$NEXT? [y/N] " CONFIRM; \
+	if [ "$$CONFIRM" = "y" ] || [ "$$CONFIRM" = "Y" ]; then \
+		if ! git diff --quiet || ! git diff --cached --quiet; then \
+			git add -A && \
+			git commit -m "Release $$NEXT"; \
+		fi; \
+		git push origin HEAD && \
+		git tag "$$NEXT" && \
+		git push origin "$$NEXT" && \
+		echo "Tag $$NEXT pushed — CI release will start automatically."; \
+	else \
+		echo "Aborted."; \
+	fi
+
+releasemajor: ## Auto-bump major version, commit, tag, and push to trigger CI release
+	@LATEST=$$(git tag --list 'v*' --sort=-v:refname | head -1); \
+	if [ -z "$$LATEST" ]; then \
+		NEXT="v1.0.0"; \
+	else \
+		MAJOR=$$(echo "$$LATEST" | sed 's/^v//' | cut -d. -f1); \
+		MAJOR=$$((MAJOR + 1)); \
+		NEXT="v$$MAJOR.0.0"; \
 	fi; \
 	echo "Latest tag: $${LATEST:-none}"; \
 	echo "Next tag:   $$NEXT"; \
