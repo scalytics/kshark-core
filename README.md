@@ -367,6 +367,11 @@ kshark can probe the database targets that Kafka Connect connectors read from or
 | MongoDB Sink/Source (`MongoSinkConnector`, `MongoSourceConnector`) | MongoDB / Atlas | MongoDB Wire Protocol |
 | JDBC Source/Sink with `jdbc:postgresql://` URL | PostgreSQL | PostgreSQL Wire Protocol v3 |
 | JDBC Source/Sink with `jdbc:db2://` URL | IBM DB2 | DRDA Wire Protocol |
+| JDBC Source/Sink with `jdbc:mysql://` URL | MySQL | MySQL Wire Protocol |
+| JDBC Source/Sink with `jdbc:sqlserver://` URL | SQL Server | TDS Wire Protocol |
+| JDBC Source/Sink with `jdbc:oracle://` URL | Oracle | Oracle Net Protocol |
+| Redis Sink/Source (`RedisSinkConnector`) | Redis | RESP Protocol |
+| Elasticsearch Sink (`ElasticsearchSinkConnector`) | Elasticsearch | HTTP REST |
 
 ### Probe Layers
 
@@ -683,8 +688,9 @@ For detailed architecture information, see [ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 ```
 kshark-core/
-├── cmd/kshark/            # Main application (14 focused source files)
-│   ├── main.go            # Entry point, CLI flags, scan orchestration
+├── cmd/kshark/            # Main application (15 focused source files)
+│   ├── main.go            # Entry point, CLI flags, watch mode
+│   ├── scan.go            # Scan orchestration, config, REST proxy
 │   ├── ai.go              # AI analysis prompt building + API client
 │   ├── auth.go            # SASL authentication (PLAIN, SCRAM, JAAS)
 │   ├── bundle.go          # Diagnostics bundle, Terraform redaction
@@ -894,6 +900,28 @@ For security concerns and vulnerability reports, please see [SECURITY.md](docs/S
 - Credentials stored in plain text configuration files (use file permissions 0600)
 - RFC1918 addresses are allowed (with warning) since PrivateLink targets are common
 - See [SECURITY.md](docs/SECURITY.md) for detailed analysis
+
+---
+
+## Code Quality
+
+| Metric | Value |
+|--------|-------|
+| Statement coverage (`cmd/kshark`) | 61.6% |
+| Statement coverage (`internal/connectapi`) | 75.7% |
+| Statement coverage (`internal/probe`) | 72.3% |
+| Test functions | 261 unit + 3 fuzz |
+| `go vet` warnings | 0 |
+| Race conditions (`-race`) | 0 |
+| Source files | 15 (cmd) + 11 (internal) |
+| Largest file | 685 lines (`main.go`) |
+
+Key quality properties:
+- **SSRF protection** on all HTTP paths (29 call sites) with two-tier model (DENY loopback, WARN RFC1918)
+- **Fuzz testing** on JAAS parser, properties loader, SSRF URL validator, JDBC URL parser
+- **Context cancellation** propagated through all probe functions (DNS, TCP, TLS)
+- **Mutex-safe** report writes (`sync.Mutex` in Report struct)
+- **Credential redaction** in reports, bundles, AI prompts, and ConfigEcho
 
 ---
 
