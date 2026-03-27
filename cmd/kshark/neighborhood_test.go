@@ -15,6 +15,7 @@
 package main
 
 import (
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -176,6 +177,134 @@ func TestConnectorNeighborhoodPorts(t *testing.T) {
 				t.Errorf("expected first port %d for %s, got %d", tt.wantPort, tt.connType, ports[0])
 			}
 		})
+	}
+}
+
+func TestPortNeighborhoodScan_MultiplePortsMixed(t *testing.T) {
+	// Listen on two ports, leave one closed
+	ln1, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln1.Close()
+	go func() {
+		for {
+			conn, err := ln1.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln2.Close()
+	go func() {
+		for {
+			conn, err := ln2.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	// Get a closed port
+	lnClosed, _ := net.Listen("tcp", "127.0.0.1:0")
+	closedPort := lnClosed.Addr().(*net.TCPAddr).Port
+	lnClosed.Close()
+
+	port1 := ln1.Addr().(*net.TCPAddr).Port
+	port2 := ln2.Addr().(*net.TCPAddr).Port
+
+	results := portNeighborhoodScan("127.0.0.1", 0, []int{port1, port2, closedPort}, 5*time.Second)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+
+	openCount := 0
+	failCount := 0
+	for _, r := range results {
+		if r.Status == OK {
+			openCount++
+		} else {
+			failCount++
+		}
+	}
+	if openCount != 2 {
+		t.Errorf("expected 2 open ports, got %d", openCount)
+	}
+	if failCount != 1 {
+		t.Errorf("expected 1 failed port, got %d", failCount)
+	}
+}
+
+func TestPortNeighborhoodScan_CompletesWithinTimeout(t *testing.T) {
+	start := time.Now()
+	// Scan ports on a non-routable address; should respect the 2s timeout
+	results := portNeighborhoodScan("192.0.2.1", 0, []int{80, 443, 9092}, 2*time.Second)
+	elapsed := time.Since(start)
+
+	if len(results) != 3 {
+		t.Errorf("expected 3 results, got %d", len(results))
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("scan took %v, expected completion within ~2s timeout", elapsed)
+	}
+}
+
+func TestClassifyRestriction_MixedFiltering(t *testing.T) {
+	results := []PortProbeResult{
+		{Port: 80, Status: OK},
+		{Port: 443, Status: FAIL, Detail: "timeout"},
+		{Port: 9092, Status: FAIL, Detail: "refused"},
+	}
+	d := classifyRestriction(results, true)
+	if d.Classification != "mixed_filtering" {
+		t.Errorf("expected mixed_filtering, got %s", d.Classification)
+	}
+	if d.Confidence != "medium" {
+		t.Errorf("expected medium confidence, got %s", d.Confidence)
+	}
+}
+
+func TestRunNeighborhoodScan_InvalidHost(t *testing.T) {
+	r := &Report{}
+	runNeighborhoodScan(r, ";inject", 9092, "", 3*time.Second)
+	// Should not add any rows (hostname rejected)
+	if len(r.Rows) != 0 {
+		t.Errorf("expected 0 rows for invalid hostname, got %d", len(r.Rows))
+	}
+}
+
+func TestRunNeighborhoodScan_WithOpenPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	r := &Report{}
+	runNeighborhoodScan(r, "127.0.0.1", port, fmt.Sprintf("%d", port), 5*time.Second)
+
+	if len(r.Rows) == 0 {
+		t.Fatal("expected at least 1 row from neighborhood scan")
+	}
+	if r.Rows[0].Component != "neighborhood" {
+		t.Errorf("component = %q, want 'neighborhood'", r.Rows[0].Component)
 	}
 }
 

@@ -3,7 +3,6 @@ package probe
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net"
 	"strings"

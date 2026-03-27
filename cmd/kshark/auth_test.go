@@ -316,3 +316,100 @@ func TestTransportFromProps_SASL_SSL(t *testing.T) {
 		t.Error("expected non-nil SASL for SASL_SSL/PLAIN")
 	}
 }
+
+func TestTransportFromProps_SCRAM256(t *testing.T) {
+	props := map[string]string{
+		"security.protocol": "SASL_SSL",
+		"sasl.mechanism":    "SCRAM-SHA-256",
+		"sasl.username":     "user",
+		"sasl.password":     "pass",
+	}
+	tr, err := transportFromProps(props, 10*1e9)
+	if err != nil {
+		t.Fatalf("transportFromProps() error = %v", err)
+	}
+	if tr.TLS == nil {
+		t.Error("expected TLS for SASL_SSL")
+	}
+	if tr.SASL == nil {
+		t.Error("expected SASL for SCRAM-SHA-256")
+	}
+}
+
+func TestTransportFromProps_SCRAM512(t *testing.T) {
+	props := map[string]string{
+		"security.protocol": "SASL_SSL",
+		"sasl.mechanism":    "SCRAM-SHA-512",
+		"sasl.username":     "user",
+		"sasl.password":     "pass",
+	}
+	tr, err := transportFromProps(props, 10*1e9)
+	if err != nil {
+		t.Fatalf("transportFromProps() error = %v", err)
+	}
+	if tr.SASL == nil {
+		t.Error("expected SASL for SCRAM-SHA-512")
+	}
+}
+
+func TestTransportFromProps_SSL_NoSASL(t *testing.T) {
+	props := map[string]string{
+		"security.protocol": "SSL",
+	}
+	tr, err := transportFromProps(props, 10*1e9)
+	if err != nil {
+		t.Fatalf("transportFromProps() error = %v", err)
+	}
+	if tr.TLS == nil {
+		t.Error("expected TLS for SSL")
+	}
+	if tr.SASL != nil {
+		t.Error("expected nil SASL for SSL without sasl.mechanism")
+	}
+}
+
+func TestTransportFromProps_MissingSASLMechanism(t *testing.T) {
+	props := map[string]string{
+		"security.protocol": "SASL_SSL",
+		// sasl.mechanism missing
+	}
+	_, err := transportFromProps(props, 10*1e9)
+	if err == nil {
+		t.Fatal("expected error for missing sasl.mechanism with SASL_SSL")
+	}
+}
+
+func TestDialerFromProps_SCRAM256(t *testing.T) {
+	props := map[string]string{
+		"security.protocol": "SASL_SSL",
+		"sasl.mechanism":    "SCRAM-SHA-256",
+		"sasl.username":     "user",
+		"sasl.password":     "pass",
+	}
+	d, _, err := dialerFromProps(props, "broker.example.com")
+	if err != nil {
+		t.Fatalf("dialerFromProps() error = %v", err)
+	}
+	if d.TLS == nil {
+		t.Error("expected TLS for SASL_SSL")
+	}
+	if d.SASLMechanism == nil {
+		t.Error("expected SASL mechanism for SCRAM-SHA-256")
+	}
+}
+
+func TestDialerFromProps_SCRAM512(t *testing.T) {
+	props := map[string]string{
+		"security.protocol": "SASL_SSL",
+		"sasl.mechanism":    "SCRAM-SHA-512",
+		"sasl.username":     "user",
+		"sasl.password":     "pass",
+	}
+	d, _, err := dialerFromProps(props, "broker.example.com")
+	if err != nil {
+		t.Fatalf("dialerFromProps() error = %v", err)
+	}
+	if d.SASLMechanism == nil {
+		t.Error("expected SASL mechanism for SCRAM-SHA-512")
+	}
+}

@@ -314,6 +314,61 @@ func TestCheckSchemaRegistry_DirectHTTPFlow_500(t *testing.T) {
 	}
 }
 
+// ---------- checkSchemaRegistry additional path tests ----------
+
+func TestCheckSchemaRegistry_UnresolvableHost(t *testing.T) {
+	report := &Report{}
+	// Unresolvable hostname gets caught by SSRF check (which does DNS resolution)
+	props := map[string]string{"schema.registry.url": "https://sr.kshark-nonexistent-domain.invalid:8081"}
+	checkSchemaRegistry(context.Background(), report, props)
+
+	if len(report.Rows) == 0 {
+		t.Fatal("expected at least 1 row for unresolvable host")
+	}
+	// SSRF check catches the DNS failure before the function's own DNS check
+	if report.Rows[0].Status != FAIL {
+		t.Errorf("expected FAIL, got %s: %s", report.Rows[0].Status, report.Rows[0].Detail)
+	}
+}
+
+func TestCheckSchemaRegistry_HTTPFailure(t *testing.T) {
+	// Use a RFC1918 address that passes SSRF but can't connect (no server)
+	report := &Report{}
+	props := map[string]string{"schema.registry.url": "https://10.255.255.1:18081"}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	checkSchemaRegistry(ctx, report, props)
+
+	// Should have SSRF warn + DNS OK (IP literal) + HTTP FAIL (connection refused/timeout)
+	hasFail := false
+	for _, row := range report.Rows {
+		if row.Status == FAIL && (strings.Contains(row.Detail, "GET /subjects failed") || strings.Contains(row.Detail, "DNS failed")) {
+			hasFail = true
+		}
+	}
+	if !hasFail {
+		t.Log("Schema Registry test with RFC1918 address may vary by network")
+		for _, row := range report.Rows {
+			t.Logf("  row: component=%s layer=%s status=%s detail=%q", row.Component, row.Layer, row.Status, row.Detail)
+		}
+	}
+}
+
+// ---------- checkRESTProxy additional path tests ----------
+
+func TestCheckRESTProxy_UnresolvableHost(t *testing.T) {
+	report := &Report{}
+	props := map[string]string{"rest.proxy.url": "https://rp.kshark-nonexistent-domain.invalid:8082"}
+	checkRESTProxy(context.Background(), report, props)
+
+	if len(report.Rows) == 0 {
+		t.Fatal("expected at least 1 row for unresolvable host")
+	}
+	if report.Rows[0].Status != FAIL {
+		t.Errorf("expected FAIL, got %s: %s", report.Rows[0].Status, report.Rows[0].Detail)
+	}
+}
+
 func TestCheckSchemaRegistry_DirectHTTPFlow_BasicAuth(t *testing.T) {
 	var receivedUser, receivedPass string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

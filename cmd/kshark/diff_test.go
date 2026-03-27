@@ -27,7 +27,7 @@ func TestLoadReport_Valid(t *testing.T) {
 		},
 	}
 
-	data, err := json.Marshal(r)
+	data, err := json.Marshal(&r)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
 	}
@@ -427,6 +427,55 @@ func TestDiffReports_AllNew(t *testing.T) {
 	if newCount != 2 {
 		t.Errorf("new = %d, want 2", newCount)
 	}
+}
+
+// ---------- runDiff integration test (happy path, no os.Exit) ----------
+
+func TestRunDiff_IdenticalReports(t *testing.T) {
+	dir := t.TempDir()
+
+	r := Report{
+		StartedAt:  time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+		FinishedAt: time.Date(2026, 1, 1, 10, 0, 5, 0, time.UTC),
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L7, Status: OK, Detail: "ok"},
+		},
+	}
+	data, _ := json.Marshal(&r)
+	path1 := filepath.Join(dir, "report1.json")
+	path2 := filepath.Join(dir, "report2.json")
+	os.WriteFile(path1, data, 0644)
+	os.WriteFile(path2, data, 0644)
+
+	// runDiff prints to stdout and returns (no os.Exit for valid files)
+	runDiff(path1, path2)
+}
+
+func TestRunDiff_WithChanges(t *testing.T) {
+	dir := t.TempDir()
+
+	r1 := Report{
+		StartedAt:  time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC),
+		FinishedAt: time.Date(2026, 1, 1, 10, 0, 5, 0, time.UTC),
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: FAIL, Detail: "TCP timeout"},
+		},
+	}
+	r2 := Report{
+		StartedAt:  time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC),
+		FinishedAt: time.Date(2026, 1, 1, 11, 0, 3, 0, time.UTC),
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: OK, Detail: "Connected"},
+		},
+	}
+	d1, _ := json.Marshal(&r1)
+	d2, _ := json.Marshal(&r2)
+	path1 := filepath.Join(dir, "report1.json")
+	path2 := filepath.Join(dir, "report2.json")
+	os.WriteFile(path1, d1, 0644)
+	os.WriteFile(path2, d2, 0644)
+
+	runDiff(path1, path2)
 }
 
 func TestDiffReports_AllRemoved(t *testing.T) {

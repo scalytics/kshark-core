@@ -167,7 +167,7 @@ func TestLoadReportsFromDir(t *testing.T) {
 				string(L7): {OK: 1},
 			},
 		}
-		data, err := json.MarshalIndent(r, "", "  ")
+		data, err := json.MarshalIndent(&r, "", "  ")
 		if err != nil {
 			t.Fatalf("json.Marshal report %d: %v", i, err)
 		}
@@ -196,7 +196,7 @@ func TestLoadReportsFromDir(t *testing.T) {
 			string(L3): {OK: 1},
 		},
 	}
-	noStartData, _ := json.Marshal(noStart)
+	noStartData, _ := json.Marshal(&noStart)
 	if err := os.WriteFile(filepath.Join(dir, "no_start.json"), noStartData, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ func TestTrendEntry_WithFailures(t *testing.T) {
 			string(L3): {FAIL: 1},
 		},
 	}
-	data, _ := json.MarshalIndent(r, "", "  ")
+	data, _ := json.MarshalIndent(&r, "", "  ")
 	path := filepath.Join(dir, "fail_report.json")
 	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
@@ -323,4 +323,68 @@ func TestTrendEntry_WithFailures(t *testing.T) {
 	if te.Duration != 10*time.Second {
 		t.Errorf("Duration = %v, want 10s", te.Duration)
 	}
+}
+
+// ---------- runTrend integration tests (happy path) ----------
+
+func TestRunTrend_WithReports(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	// Create reports directory with sample reports
+	os.MkdirAll("reports", 0755)
+	for i := 0; i < 3; i++ {
+		r := Report{
+			StartedAt:  time.Date(2026, 1, 1+i, 10, 0, 0, 0, time.UTC),
+			FinishedAt: time.Date(2026, 1, 1+i, 10, 0, 5, 0, time.UTC),
+			Rows: []Row{
+				{Component: "kafka", Target: "broker:9092", Layer: L7, Status: OK, Detail: "ok"},
+			},
+			Summary: map[string]CheckStats{
+				string(L7): {OK: 1},
+			},
+		}
+		data, _ := json.MarshalIndent(&r, "", "  ")
+		os.WriteFile(filepath.Join("reports", "report_"+string(rune('a'+i))+".json"), data, 0644)
+	}
+
+	// Should not panic or os.Exit for valid reports
+	runTrend(10)
+}
+
+func TestRunTrend_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	os.MkdirAll("reports", 0755)
+	// No reports — should print "no report files found" and return
+	runTrend(10)
+}
+
+func TestRunTrend_LastN(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	os.MkdirAll("reports", 0755)
+	for i := 0; i < 5; i++ {
+		r := Report{
+			StartedAt:  time.Date(2026, 1, 1+i, 10, 0, 0, 0, time.UTC),
+			FinishedAt: time.Date(2026, 1, 1+i, 10, 0, 5, 0, time.UTC),
+			Rows: []Row{
+				{Component: "kafka", Target: "broker:9092", Layer: L7, Status: OK, Detail: "ok"},
+			},
+			Summary: map[string]CheckStats{string(L7): {OK: 1}},
+		}
+		data, _ := json.MarshalIndent(&r, "", "  ")
+		os.WriteFile(filepath.Join("reports", "r"+string(rune('a'+i))+".json"), data, 0644)
+	}
+
+	// Should only show last 2
+	runTrend(2)
 }

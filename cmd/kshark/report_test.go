@@ -288,6 +288,102 @@ func TestWriteJSON_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestWriteHTMLReport_MissingTemplate(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	r := &Report{
+		StartedAt:  time.Now(),
+		FinishedAt: time.Now(),
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L7, Status: OK, Detail: "ok"},
+		},
+	}
+
+	_, err := writeHTMLReport(r, nil)
+	if err == nil {
+		t.Fatal("expected error when template file is missing")
+	}
+	if !strings.Contains(err.Error(), "template") {
+		t.Errorf("expected template error, got: %v", err)
+	}
+}
+
+func TestWriteHTMLReport_WithTemplate(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	// Create minimal template
+	os.MkdirAll("web/templates", 0755)
+	tmpl := `<!DOCTYPE html><html><body>
+{{range .Report.Rows}}<div class="{{.Status | ToLower}}">{{Icon .Status}} {{.Component}} {{.Detail}}</div>
+{{end}}
+{{if .Analysis}}<div>{{.Analysis.RootCauseAnalysis}}</div>{{end}}
+</body></html>`
+	os.WriteFile("web/templates/report_template.html", []byte(tmpl), 0644)
+
+	r := &Report{
+		StartedAt:  time.Now(),
+		FinishedAt: time.Now(),
+		Rows: []Row{
+			{Component: "kafka", Target: "broker:9092", Layer: L7, Status: OK, Detail: "ApiVersions OK"},
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: FAIL, Detail: "TCP timeout"},
+		},
+	}
+
+	path, err := writeHTMLReport(r, nil)
+	if err != nil {
+		t.Fatalf("writeHTMLReport() error = %v", err)
+	}
+	if path == "" {
+		t.Fatal("expected non-empty path")
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "ApiVersions OK") {
+		t.Error("HTML report missing row detail")
+	}
+	if !strings.Contains(content, "<!DOCTYPE html>") {
+		t.Error("HTML report missing doctype")
+	}
+}
+
+func TestWriteHTMLReport_WithAnalysis(t *testing.T) {
+	dir := t.TempDir()
+	origDir, _ := os.Getwd()
+	defer os.Chdir(origDir)
+	os.Chdir(dir)
+
+	os.MkdirAll("web/templates", 0755)
+	tmpl := `<!DOCTYPE html><html><body>
+{{if .Analysis}}<div id="analysis">{{.Analysis.RootCauseAnalysis}}</div>{{end}}
+</body></html>`
+	os.WriteFile("web/templates/report_template.html", []byte(tmpl), 0644)
+
+	r := &Report{StartedAt: time.Now(), FinishedAt: time.Now()}
+	analysis := &AIAnalysisResponse{
+		RootCauseAnalysis: "Firewall blocks port 9092",
+	}
+
+	path, err := writeHTMLReport(r, analysis)
+	if err != nil {
+		t.Fatalf("writeHTMLReport() error = %v", err)
+	}
+
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "Firewall blocks port 9092") {
+		t.Error("HTML report missing analysis content")
+	}
+}
+
 func TestWriteJSON_PathTraversal(t *testing.T) {
 	dir := t.TempDir()
 	origDir, err := os.Getwd()
