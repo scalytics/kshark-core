@@ -63,6 +63,20 @@ signs:
       - "--output-signature=${signature}"
       - "${artifact}"
 
+brews:
+  - name: kshark
+    repository:
+      owner: scalytics
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/scalytics/kshark-core"
+    description: "Kafka connectivity diagnostic tool — layered probe from DNS to produce/consume"
+    license: "Apache-2.0"
+    install: |
+      bin.install "kshark"
+    test: |
+      system "#{bin}/kshark", "--version"
+
 snapshot:
   name_template: "{{ incpatch .Version }}-next"
 
