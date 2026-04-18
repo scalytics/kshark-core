@@ -1,0 +1,66 @@
+# kshark Helm values
+#
+# Deployed as a CronJob that runs a diagnostic probe on schedule.
+# For ad-hoc probes, create a Job from the same image:
+#   kubectl create job kshark-probe-$(date +%s) --from=cronjob/kshark -n scalytics
+
+image:
+  repository: ghcr.io/scalytics/kshark
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Where kshark reports are written. A PVC is mounted at /reports.
+# Change storageClass for cloud storage (e.g. "gp3" on EKS).
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 1Gi
+
+schedule:
+  # Default: every hour, at minute 0.
+  cron: "0 * * * *"
+  # Suspend the schedule (useful for local dev).
+  suspend: false
+  # How many completed + failed pods to keep for inspection.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+
+# Probe configuration. `args` is passed to the kshark binary directly.
+# For bp-001, a full probe against all components is recommended:
+#   args: ["probe", "--all", "--output", "/reports/latest.html"]
+#
+# For standalone (no bp-001), a simple --help run proves the image runs.
+probe:
+  args: ["--help"]
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Pod security — kshark Dockerfile runs as UID 65532 (appuser).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+serviceAccount:
+  create: true
+  name: ""        # defaulted from release name
+  annotations: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+labels:
+  app.kubernetes.io/part-of: ops-foundation
