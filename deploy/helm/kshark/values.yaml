@@ -5,8 +5,11 @@
 #   kubectl create job kshark-probe-$(date +%s) --from=cronjob/kshark -n scalytics
 
 image:
-  repository: ghcr.io/scalytics/kshark
-  tag: latest
+  # Local-only / NAS-pinned (PLAN-06 E-03 / audit F-1). Iter-8 flips
+  # to ghcr.io. Override via `--set image.repository=...` in any
+  # other environment.
+  repository: 192.168.0.131:5100/scalytics/kshark
+  tag: "v1.1.0"
   pullPolicy: IfNotPresent
 
 # Where kshark reports are written. A PVC is mounted at /reports.
