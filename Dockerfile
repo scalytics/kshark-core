@@ -1,5 +1,5 @@
 # --- Build Stage ---
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /kshark ./cmd/kshark
 
 # --- Final Stage ---
-FROM alpine:latest
+FROM alpine:3.21
 
 # It's good practice to run as a non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
