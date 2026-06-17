@@ -144,9 +144,9 @@ func TestRunConnectorProbe_ConnectAPI_Fallback(t *testing.T) {
 	cfgPath := filepath.Join(dir, "connector.json")
 	cfg := map[string]string{
 		"name":                "pg-sink",
-		"connector.class":    "io.confluent.connect.jdbc.JdbcSinkConnector",
-		"connection.url":     "jdbc:postgresql://pg.example.com:5432/mydb",
-		"connection.user":    "user",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSinkConnector",
+		"connection.url":      "jdbc:postgresql://pg.example.com:5432/mydb",
+		"connection.user":     "user",
 		"connection.password": "pass",
 	}
 	data, _ := json.Marshal(cfg)
@@ -188,9 +188,9 @@ func TestRunConnectorProbe_PasswordRedaction(t *testing.T) {
 
 	cfg := map[string]string{
 		"name":                "pg-sink",
-		"connector.class":    "io.confluent.connect.jdbc.JdbcSinkConnector",
-		"connection.url":     "jdbc:postgresql://pg.example.com:5432/mydb",
-		"connection.user":    "admin",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSinkConnector",
+		"connection.url":      "jdbc:postgresql://pg.example.com:5432/mydb",
+		"connection.user":     "admin",
 		"connection.password": "super-secret-password",
 	}
 	data, _ := json.Marshal(cfg)
@@ -239,9 +239,9 @@ func TestRunConnectorProbe_PostgreSQL(t *testing.T) {
 
 	cfg := map[string]string{
 		"name":                "pg-sink",
-		"connector.class":    "io.confluent.connect.jdbc.JdbcSinkConnector",
-		"connection.url":     "jdbc:postgresql://pg.example.com:5432/mydb",
-		"connection.user":    "user",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSinkConnector",
+		"connection.url":      "jdbc:postgresql://pg.example.com:5432/mydb",
+		"connection.user":     "user",
 		"connection.password": "pass",
 	}
 	data, _ := json.Marshal(cfg)

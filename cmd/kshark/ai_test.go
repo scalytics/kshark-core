@@ -258,7 +258,7 @@ func TestWriteAnalysisResponseJSON(t *testing.T) {
 	analysis := &AIAnalysisResponse{
 		RootCauseAnalysis: "TLS certificate expired",
 		ProblemLayer:      "L5-6-TLS",
-		LikelyCategory:   "tls",
+		LikelyCategory:    "tls",
 		Confidence:        "high",
 		Severity:          "critical",
 		Explanation:       "The server certificate has expired.",
@@ -347,7 +347,7 @@ func TestAnalyzeReport_ParseResponse_Success(t *testing.T) {
 	inner := AIAnalysisResponse{
 		RootCauseAnalysis: "TLS certificate expired",
 		ProblemLayer:      "L5-6-TLS",
-		LikelyCategory:   "tls",
+		LikelyCategory:    "tls",
 		Confidence:        "high",
 		Severity:          "critical",
 		Explanation:       "The server certificate has expired.",
@@ -413,7 +413,7 @@ func TestAnalyzeReport_HTTPServerIntegration(t *testing.T) {
 	analysis := AIAnalysisResponse{
 		RootCauseAnalysis: "test root cause",
 		ProblemLayer:      "L7-Kafka",
-		LikelyCategory:   "authentication",
+		LikelyCategory:    "authentication",
 		Confidence:        "medium",
 		Severity:          "error",
 		Explanation:       "test explanation",
@@ -455,7 +455,7 @@ func TestAnalyzeReport_DirectHTTPFlow(t *testing.T) {
 	analysis := AIAnalysisResponse{
 		RootCauseAnalysis: "DNS resolution failure",
 		ProblemLayer:      "L3-Network",
-		LikelyCategory:   "dns",
+		LikelyCategory:    "dns",
 		Confidence:        "high",
 		Severity:          "error",
 		Explanation:       "Cannot resolve broker hostname.",
@@ -671,7 +671,7 @@ func TestAnalyzeReport_FullFunction_Success(t *testing.T) {
 	analysis := AIAnalysisResponse{
 		RootCauseAnalysis: "Firewall blocks port 9092",
 		ProblemLayer:      "L4-TCP",
-		LikelyCategory:   "network",
+		LikelyCategory:    "network",
 		Confidence:        "high",
 		Severity:          "critical",
 		Explanation:       "TCP connections to Kafka brokers are timing out.",
@@ -789,7 +789,7 @@ func TestPrintIllustrativeAnalysis_NoPanic(t *testing.T) {
 	analysis := &AIAnalysisResponse{
 		RootCauseAnalysis: "Test root cause",
 		ProblemLayer:      "L7-Kafka",
-		LikelyCategory:   "authentication",
+		LikelyCategory:    "authentication",
 		Confidence:        "high",
 		Severity:          "critical",
 		Explanation:       "Test explanation",

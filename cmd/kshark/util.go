@@ -58,7 +58,7 @@ func initScanLog(path string, logFormat string) (*os.File, error) {
 // credential leakage in reports. Redacts values following known secret flags.
 func redactArgs(args []string) []string {
 	secretFlags := map[string]bool{
-		"-connect-basic-auth":  true,
+		"-connect-basic-auth":   true,
 		"-connect-bearer-token": true,
 	}
 	out := make([]string, len(args))

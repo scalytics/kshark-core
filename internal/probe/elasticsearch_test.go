@@ -425,10 +425,10 @@ func TestElasticsearchProber_ConcurrentProbes(t *testing.T) {
 
 func TestParseHTTPStatusCode(t *testing.T) {
 	tests := []struct {
-		name       string
-		line       string
-		wantCode   int
-		wantErr    bool
+		name     string
+		line     string
+		wantCode int
+		wantErr  bool
 	}{
 		{
 			name:     "HTTP 200",
@@ -479,10 +479,10 @@ func TestParseHTTPStatusCode(t *testing.T) {
 
 func TestParseESRootResponse(t *testing.T) {
 	tests := []struct {
-		name         string
-		body         string
-		wantCluster  string
-		wantVersion  string
+		name        string
+		body        string
+		wantCluster string
+		wantVersion string
 	}{
 		{
 			name:        "full response",

@@ -157,8 +157,8 @@ func TestRedactProps(t *testing.T) {
 		{
 			name: "password fields redacted",
 			input: map[string]string{
-				"sasl.password":      "secret123",
-				"bootstrap.servers":  "localhost:9092",
+				"sasl.password":     "secret123",
+				"bootstrap.servers": "localhost:9092",
 			},
 			check: func(t *testing.T, out map[string]string) {
 				if out["sasl.password"] != "[REDACTED]" {
@@ -227,9 +227,9 @@ func TestRedactProps(t *testing.T) {
 		{
 			name: "normal fields preserved",
 			input: map[string]string{
-				"bootstrap.servers":  "broker1:9092",
-				"security.protocol":  "SASL_SSL",
-				"sasl.mechanism":     "PLAIN",
+				"bootstrap.servers": "broker1:9092",
+				"security.protocol": "SASL_SSL",
+				"sasl.mechanism":    "PLAIN",
 			},
 			check: func(t *testing.T, out map[string]string) {
 				if out["bootstrap.servers"] != "broker1:9092" {

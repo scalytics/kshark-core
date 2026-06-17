@@ -400,7 +400,7 @@ func TestAIAPIIntegration_FullRoundTrip(t *testing.T) {
 	analysis := AIAnalysisResponse{
 		RootCauseAnalysis: "Firewall blocking port 9092",
 		ProblemLayer:      "L4-TCP",
-		LikelyCategory:   "network",
+		LikelyCategory:    "network",
 		Confidence:        "high",
 		Severity:          "critical",
 		Explanation:       "TCP connection to broker timed out, indicating a firewall or security group issue.",
@@ -898,4 +898,3 @@ func TestRunScan_ConnectorOnly(t *testing.T) {
 		}
 	}
 }
-

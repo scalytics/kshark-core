@@ -478,9 +478,9 @@ func TestClassifyRedisAuthResponse(t *testing.T) {
 
 func TestParseRedisInfoVersion(t *testing.T) {
 	tests := []struct {
-		name    string
-		info    string
-		want    string
+		name string
+		info string
+		want string
 	}{
 		{
 			name: "standard info",

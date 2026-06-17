@@ -14,7 +14,7 @@ import (
 // DB2Prober probes DB2 targets using the DRDA wire protocol.
 type DB2Prober struct{}
 
-func NewDB2Prober() *DB2Prober  { return &DB2Prober{} }
+func NewDB2Prober() *DB2Prober    { return &DB2Prober{} }
 func (p *DB2Prober) Type() string { return "db2" }
 
 // DRDA code points
@@ -30,18 +30,18 @@ const (
 	cpRDBNFNRM uint16 = 0x2211 // RDB Not Found
 
 	// Parameter code points
-	cpSRVNAM   uint16 = 0x116D // Server Name
-	cpSRVRLSLV uint16 = 0x115A // Server Release Level
-	cpEXTNAM   uint16 = 0x115E // External Name
-	cpMGRLVLLS uint16 = 0x1404 // Manager Level List
-	cpSECMEC   uint16 = 0x11A2 // Security Mechanism
-	cpSECCHKCD uint16 = 0x11A4 // Security Check Code
-	cpUSRID    uint16 = 0x11A0 // User ID
-	cpPASSWORD uint16 = 0x11A1 // Password
-	cpRDBNAM   uint16 = 0x2110 // RDB Name
-	cpPRDID    uint16 = 0x112E // Product ID
+	cpSRVNAM    uint16 = 0x116D // Server Name
+	cpSRVRLSLV  uint16 = 0x115A // Server Release Level
+	cpEXTNAM    uint16 = 0x115E // External Name
+	cpMGRLVLLS  uint16 = 0x1404 // Manager Level List
+	cpSECMEC    uint16 = 0x11A2 // Security Mechanism
+	cpSECCHKCD  uint16 = 0x11A4 // Security Check Code
+	cpUSRID     uint16 = 0x11A0 // User ID
+	cpPASSWORD  uint16 = 0x11A1 // Password
+	cpRDBNAM    uint16 = 0x2110 // RDB Name
+	cpPRDID     uint16 = 0x112E // Product ID
 	cpTYPDEFNAM uint16 = 0x002F // Type Definition Name
-	cpCRRTKN   uint16 = 0x2135 // Correlation Token
+	cpCRRTKN    uint16 = 0x2135 // Correlation Token
 	cpRDBACSCLS uint16 = 0x210F // RDB Access Manager Class
 
 	secUSRIDPWD uint16 = 0x0003 // User ID + Password mechanism
@@ -252,7 +252,7 @@ func (p *DB2Prober) Probe(ctx context.Context, target ProbeTarget) []ProbeStep {
 func buildDSSHeader(length uint16, chainBit bool, correlationID uint16) []byte {
 	buf := make([]byte, 6)
 	binary.BigEndian.PutUint16(buf[0:2], length) // total length including header
-	buf[2] = 0xD0                                 // magic byte
+	buf[2] = 0xD0                                // magic byte
 	if chainBit {
 		buf[3] = 0x41 // request, chained
 	} else {
