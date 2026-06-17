@@ -12,8 +12,8 @@ import (
 // PostgresProber probes PostgreSQL targets.
 type PostgresProber struct{}
 
-func NewPostgresProber() *PostgresProber  { return &PostgresProber{} }
-func (p *PostgresProber) Type() string    { return "postgresql" }
+func NewPostgresProber() *PostgresProber { return &PostgresProber{} }
+func (p *PostgresProber) Type() string   { return "postgresql" }
 
 func (p *PostgresProber) Probe(ctx context.Context, target ProbeTarget) []ProbeStep {
 	var steps []ProbeStep

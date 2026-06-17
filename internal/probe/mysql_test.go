@@ -91,8 +91,8 @@ func buildMockMySQLGreeting(serverVersion string, connID uint32) []byte {
 func buildMockMySQLOK() []byte {
 	var payload bytes.Buffer
 	payload.WriteByte(mysqlPacketOK)
-	payload.WriteByte(0) // affected rows
-	payload.WriteByte(0) // last insert id
+	payload.WriteByte(0)                                        // affected rows
+	payload.WriteByte(0)                                        // last insert id
 	binary.Write(&payload, binary.LittleEndian, uint16(0x0002)) // status
 	binary.Write(&payload, binary.LittleEndian, uint16(0))      // warnings
 	return writeMySQLPacket(payload.Bytes(), 2)
@@ -385,10 +385,10 @@ func TestClassifyMySQLAuthResponse(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		pkt        []byte
-		wantStatus string
-		wantLayer  string
+		name         string
+		pkt          []byte
+		wantStatus   string
+		wantLayer    string
 		wantInDetail string
 	}{
 		{

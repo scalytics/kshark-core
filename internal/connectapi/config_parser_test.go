@@ -135,9 +135,9 @@ func TestParseConnectorConfig_MongoDB(t *testing.T) {
 
 func TestParseConnectorConfig_DB2(t *testing.T) {
 	cfg := map[string]string{
-		"connector.class":  "io.confluent.connect.jdbc.JdbcSourceConnector",
-		"connection.url":   "jdbc:db2://db2host:50000/PRODDB:sslConnection=true;",
-		"connection.user":  "db2admin",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSourceConnector",
+		"connection.url":      "jdbc:db2://db2host:50000/PRODDB:sslConnection=true;",
+		"connection.user":     "db2admin",
 		"connection.password": "secret",
 	}
 
@@ -168,9 +168,9 @@ func TestParseConnectorConfig_DB2(t *testing.T) {
 
 func TestParseConnectorConfig_PostgreSQL(t *testing.T) {
 	cfg := map[string]string{
-		"connector.class":  "io.confluent.connect.jdbc.JdbcSourceConnector",
-		"connection.url":   "jdbc:postgresql://pghost:5432/appdb?sslmode=require",
-		"connection.user":  "pguser",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSourceConnector",
+		"connection.url":      "jdbc:postgresql://pghost:5432/appdb?sslmode=require",
+		"connection.user":     "pguser",
 		"connection.password": "secret",
 	}
 
@@ -271,9 +271,9 @@ func TestLoadConnectorConfigFile_InvalidJSON(t *testing.T) {
 
 func TestExtractMySQLTarget(t *testing.T) {
 	cfg := map[string]string{
-		"connector.class":    "io.confluent.connect.jdbc.JdbcSourceConnector",
-		"connection.url":     "jdbc:mysql://myhost:3306/testdb?useSSL=true",
-		"connection.user":    "myuser",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSourceConnector",
+		"connection.url":      "jdbc:mysql://myhost:3306/testdb?useSSL=true",
+		"connection.user":     "myuser",
 		"connection.password": "mypass",
 	}
 
@@ -307,9 +307,9 @@ func TestExtractMySQLTarget(t *testing.T) {
 
 func TestExtractSQLServerTarget(t *testing.T) {
 	cfg := map[string]string{
-		"connector.class":    "io.confluent.connect.jdbc.JdbcSourceConnector",
-		"connection.url":     "jdbc:sqlserver://sqlhost:1433;databaseName=mydb;encrypt=true",
-		"connection.user":    "sqluser",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSourceConnector",
+		"connection.url":      "jdbc:sqlserver://sqlhost:1433;databaseName=mydb;encrypt=true",
+		"connection.user":     "sqluser",
 		"connection.password": "sqlpass",
 	}
 
@@ -343,9 +343,9 @@ func TestExtractSQLServerTarget(t *testing.T) {
 
 func TestExtractOracleTarget(t *testing.T) {
 	cfg := map[string]string{
-		"connector.class":    "io.confluent.connect.jdbc.JdbcSourceConnector",
-		"connection.url":     "jdbc:oracle:thin:@orahost:1521/ORCL",
-		"connection.user":    "orauser",
+		"connector.class":     "io.confluent.connect.jdbc.JdbcSourceConnector",
+		"connection.url":      "jdbc:oracle:thin:@orahost:1521/ORCL",
+		"connection.user":     "orauser",
 		"connection.password": "orapass",
 	}
 
@@ -463,7 +463,7 @@ func TestExtractElasticsearchTarget(t *testing.T) {
 		wantHost     string
 		wantPort     int
 		wantTLS      bool
-		wantUsername  string
+		wantUsername string
 		wantPassword string
 		wantErr      bool
 	}{
@@ -480,7 +480,7 @@ func TestExtractElasticsearchTarget(t *testing.T) {
 		{
 			name: "HTTP elasticsearch.url",
 			cfg: map[string]string{
-				"connector.class":  "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+				"connector.class":   "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
 				"elasticsearch.url": "http://eshost:9200",
 			},
 			wantHost: "eshost",
@@ -490,15 +490,15 @@ func TestExtractElasticsearchTarget(t *testing.T) {
 		{
 			name: "with connection.user and password",
 			cfg: map[string]string{
-				"connector.class":    "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
-				"connection.url":     "https://eshost:9200",
-				"connection.user":    "esuser",
+				"connector.class":     "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+				"connection.url":      "https://eshost:9200",
+				"connection.user":     "esuser",
 				"connection.password": "espass",
 			},
 			wantHost:     "eshost",
 			wantPort:     9200,
 			wantTLS:      true,
-			wantUsername:  "esuser",
+			wantUsername: "esuser",
 			wantPassword: "espass",
 		},
 		{
@@ -510,7 +510,7 @@ func TestExtractElasticsearchTarget(t *testing.T) {
 			wantHost:     "eshost",
 			wantPort:     9200,
 			wantTLS:      true,
-			wantUsername:  "user",
+			wantUsername: "user",
 			wantPassword: "pass",
 		},
 		{

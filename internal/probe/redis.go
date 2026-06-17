@@ -12,7 +12,7 @@ import (
 // RedisProber probes Redis targets using the RESP wire protocol.
 type RedisProber struct{}
 
-func NewRedisProber() *RedisProber { return &RedisProber{} }
+func NewRedisProber() *RedisProber  { return &RedisProber{} }
 func (p *RedisProber) Type() string { return "redis" }
 
 const (
@@ -410,4 +410,3 @@ func parseRedisInfoVersion(info string) string {
 	}
 	return ""
 }
-

@@ -241,13 +241,8 @@ func TestLoadReportsFromDir(t *testing.T) {
 		t.Fatalf("loaded %d trend entries, want 3", len(trends))
 	}
 
-	// Verify they are in order by sorting (same as runTrend)
-	for i := 1; i < len(trends); i++ {
-		if trends[i].StartedAt.Before(trends[i-1].StartedAt) {
-			// They may not be sorted from ReadDir, but the data should be valid
-			// runTrend sorts them, so we just verify all entries loaded correctly
-		}
-	}
+	// Ordering is handled by runTrend, not by loadTrendEntries, so this test
+	// only verifies that all entries loaded with valid data.
 
 	// Verify aggregate counts
 	for _, te := range trends {

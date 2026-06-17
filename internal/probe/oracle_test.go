@@ -65,8 +65,8 @@ func buildTNSPacket(pktType byte, payload []byte) []byte {
 	// TNS Header (8 bytes)
 	binary.Write(&buf, binary.BigEndian, uint16(totalLen)) // Packet length
 	binary.Write(&buf, binary.BigEndian, uint16(0))        // Packet checksum
-	buf.WriteByte(pktType)                                  // Packet type
-	buf.WriteByte(0)                                        // Reserved
+	buf.WriteByte(pktType)                                 // Packet type
+	buf.WriteByte(0)                                       // Reserved
 	binary.Write(&buf, binary.BigEndian, uint16(0))        // Header checksum
 
 	if payload != nil {

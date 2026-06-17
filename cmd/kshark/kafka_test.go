@@ -299,9 +299,9 @@ func TestParseStartOffset(t *testing.T) {
 
 func TestSelectBalancer(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantType  string
+		name     string
+		input    string
+		wantType string
 	}{
 		{name: "rr", input: "rr", wantType: "*kafka.RoundRobin"},
 		{name: "roundrobin", input: "roundrobin", wantType: "*kafka.RoundRobin"},

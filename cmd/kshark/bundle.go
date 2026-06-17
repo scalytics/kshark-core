@@ -31,7 +31,7 @@ import (
 // ---------- Diagnostics Bundle ----------
 
 const (
-	maxTFStateSize = 200 * 1024 * 1024 // 200 MB hard limit
+	maxTFStateSize  = 200 * 1024 * 1024 // 200 MB hard limit
 	warnTFStateSize = 50 * 1024 * 1024  // 50 MB warning threshold
 )
 
@@ -98,9 +98,9 @@ func isSensitiveKey(key string) bool {
 // captureSystemContext collects system information for the diagnostics bundle.
 func captureSystemContext() map[string]string {
 	ctx := map[string]string{
-		"os":       runtime.GOOS,
-		"arch":     runtime.GOARCH,
-		"go":       runtime.Version(),
+		"os":   runtime.GOOS,
+		"arch": runtime.GOARCH,
+		"go":   runtime.Version(),
 	}
 
 	if hostname, err := os.Hostname(); err == nil {
@@ -348,4 +348,3 @@ func redactPlanText(text string) string {
 	}
 	return strings.Join(lines, "\n")
 }
-

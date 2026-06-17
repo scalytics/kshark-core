@@ -21,9 +21,9 @@ const (
 	tdsDefaultPort = 1433
 
 	// TDS packet types
-	tdsPacketPreLogin  byte = 0x12
-	tdsPacketResponse  byte = 0x04
-	tdsPacketLogin7    byte = 0x10
+	tdsPacketPreLogin byte = 0x12
+	tdsPacketResponse byte = 0x04
+	tdsPacketLogin7   byte = 0x10
 
 	// TDS packet status
 	tdsStatusEOM byte = 0x01 // end of message
@@ -37,10 +37,10 @@ const (
 	tdsPreLoginTerminator byte = 0xFF
 
 	// Encryption values
-	tdsEncryptOff       byte = 0x00
-	tdsEncryptOn        byte = 0x01
-	tdsEncryptNotSup    byte = 0x02
-	tdsEncryptRequired  byte = 0x03
+	tdsEncryptOff      byte = 0x00
+	tdsEncryptOn       byte = 0x01
+	tdsEncryptNotSup   byte = 0x02
+	tdsEncryptRequired byte = 0x03
 )
 
 func (p *SQLServerProber) Probe(ctx context.Context, target ProbeTarget) (steps []ProbeStep) {

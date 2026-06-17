@@ -344,17 +344,17 @@ func TestDiffReports_MixedChanges(t *testing.T) {
 	r1 := &Report{
 		Rows: []Row{
 			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: FAIL, Detail: "timeout"},      // will improve
-			{Component: "dns", Target: "broker", Layer: L3, Status: OK, Detail: "resolved"},               // will degrade
-			{Component: "tls", Target: "broker:9092", Layer: L56, Status: OK, Detail: "valid cert"},       // unchanged
-			{Component: "diag", Target: "traceroute", Layer: DIAG, Status: WARN, Detail: "high latency"},  // will be removed
+			{Component: "dns", Target: "broker", Layer: L3, Status: OK, Detail: "resolved"},              // will degrade
+			{Component: "tls", Target: "broker:9092", Layer: L56, Status: OK, Detail: "valid cert"},      // unchanged
+			{Component: "diag", Target: "traceroute", Layer: DIAG, Status: WARN, Detail: "high latency"}, // will be removed
 		},
 	}
 	r2 := &Report{
 		Rows: []Row{
-			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: OK, Detail: "connected"},      // improved
-			{Component: "dns", Target: "broker", Layer: L3, Status: FAIL, Detail: "NXDOMAIN"},             // degraded
-			{Component: "tls", Target: "broker:9092", Layer: L56, Status: OK, Detail: "valid cert"},       // unchanged
-			{Component: "rest", Target: "proxy:8082", Layer: HTTP, Status: OK, Detail: "topics listed"},   // new
+			{Component: "kafka", Target: "broker:9092", Layer: L4, Status: OK, Detail: "connected"},     // improved
+			{Component: "dns", Target: "broker", Layer: L3, Status: FAIL, Detail: "NXDOMAIN"},           // degraded
+			{Component: "tls", Target: "broker:9092", Layer: L56, Status: OK, Detail: "valid cert"},     // unchanged
+			{Component: "rest", Target: "proxy:8082", Layer: HTTP, Status: OK, Detail: "topics listed"}, // new
 		},
 	}
 

@@ -196,8 +196,8 @@ func TestEarliestExpiry_NoCerts(t *testing.T) {
 }
 
 func TestEarliestExpiry_MultipleCerts(t *testing.T) {
-	earliest := time.Now().Add(30 * 24 * time.Hour)  // 30 days from now
-	later := time.Now().Add(180 * 24 * time.Hour)     // 180 days from now
+	earliest := time.Now().Add(30 * 24 * time.Hour) // 30 days from now
+	later := time.Now().Add(180 * 24 * time.Hour)   // 180 days from now
 
 	state := &tls.ConnectionState{
 		PeerCertificates: []*x509.Certificate{
@@ -273,7 +273,7 @@ func TestCheckTCP_ContextCancel(t *testing.T) {
 
 func TestCheckDNS_ResolvableHost(t *testing.T) {
 	r := &Report{}
-	checkDNS(context.Background(), r,"localhost", "kafka")
+	checkDNS(context.Background(), r, "localhost", "kafka")
 	if len(r.Rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(r.Rows))
 	}
@@ -287,7 +287,7 @@ func TestCheckDNS_ResolvableHost(t *testing.T) {
 
 func TestCheckDNS_UnresolvableHost(t *testing.T) {
 	r := &Report{}
-	checkDNS(context.Background(), r,"this.host.does.not.exist.kshark.invalid", "kafka")
+	checkDNS(context.Background(), r, "this.host.does.not.exist.kshark.invalid", "kafka")
 	if len(r.Rows) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(r.Rows))
 	}
@@ -301,7 +301,7 @@ func TestCheckDNS_UnresolvableHost(t *testing.T) {
 
 func TestCheckDNS_ComponentLabel(t *testing.T) {
 	r := &Report{}
-	checkDNS(context.Background(), r,"localhost", "connector-mongodb")
+	checkDNS(context.Background(), r, "localhost", "connector-mongodb")
 	if r.Rows[0].Component != "connector-mongodb" {
 		t.Errorf("component = %q, want %q", r.Rows[0].Component, "connector-mongodb")
 	}
@@ -327,7 +327,7 @@ func TestCheckTCP_OpenPort(t *testing.T) {
 
 	r := &Report{}
 	addr := ln.Addr().String()
-	conn := checkTCP(context.Background(), r,addr, "kafka", 5*time.Second)
+	conn := checkTCP(context.Background(), r, addr, "kafka", 5*time.Second)
 	if conn == nil {
 		t.Fatal("expected non-nil conn for open port")
 	}
@@ -351,7 +351,7 @@ func TestCheckTCP_ClosedPort(t *testing.T) {
 	ln.Close()
 
 	r := &Report{}
-	conn := checkTCP(context.Background(), r,addr, "kafka", 2*time.Second)
+	conn := checkTCP(context.Background(), r, addr, "kafka", 2*time.Second)
 	if conn != nil {
 		conn.Close()
 		t.Error("expected nil conn for closed port")
@@ -370,7 +370,7 @@ func TestCheckTCP_Timeout(t *testing.T) {
 	// 192.0.2.1 is TEST-NET-1 (RFC 5737), not routable
 	r := &Report{}
 	start := time.Now()
-	conn := checkTCP(context.Background(), r,"192.0.2.1:9092", "kafka", 500*time.Millisecond)
+	conn := checkTCP(context.Background(), r, "192.0.2.1:9092", "kafka", 500*time.Millisecond)
 	elapsed := time.Since(start)
 
 	if conn != nil {
@@ -399,7 +399,7 @@ func TestCheckTCP_ReturnsLatencyInDetail(t *testing.T) {
 	}()
 
 	r := &Report{}
-	conn := checkTCP(context.Background(), r,ln.Addr().String(), "kafka", 5*time.Second)
+	conn := checkTCP(context.Background(), r, ln.Addr().String(), "kafka", 5*time.Second)
 	if conn != nil {
 		conn.Close()
 	}
@@ -469,7 +469,7 @@ func TestWrapTLS_NilConfig_PLAINTEXT(t *testing.T) {
 	defer base.Close()
 
 	r := &Report{}
-	got := wrapTLS(context.Background(), r,base, nil, "kafka", "127.0.0.1:9092")
+	got := wrapTLS(context.Background(), r, base, nil, "kafka", "127.0.0.1:9092")
 	if got != base {
 		t.Error("expected wrapTLS to return base conn when tlsConf is nil")
 	}
@@ -525,7 +525,7 @@ func TestWrapTLS_SuccessfulHandshake(t *testing.T) {
 	}
 
 	r := &Report{}
-	got := wrapTLS(context.Background(), r,base, clientTLSConf, "kafka", "127.0.0.1:9092")
+	got := wrapTLS(context.Background(), r, base, clientTLSConf, "kafka", "127.0.0.1:9092")
 	if got == nil {
 		t.Fatal("expected non-nil conn after successful TLS handshake")
 	}
@@ -577,7 +577,7 @@ func TestWrapTLS_HandshakeFailure_WrongCA(t *testing.T) {
 	}
 
 	r := &Report{}
-	got := wrapTLS(context.Background(), r,base, clientTLSConf, "kafka", "127.0.0.1:9092")
+	got := wrapTLS(context.Background(), r, base, clientTLSConf, "kafka", "127.0.0.1:9092")
 	if got != nil {
 		got.Close()
 		t.Error("expected nil conn for untrusted cert")
@@ -630,7 +630,7 @@ func TestWrapTLS_CertExpiringSoon(t *testing.T) {
 	}
 
 	r := &Report{}
-	got := wrapTLS(context.Background(), r,base, clientTLSConf, "kafka", "127.0.0.1:9092")
+	got := wrapTLS(context.Background(), r, base, clientTLSConf, "kafka", "127.0.0.1:9092")
 	if got == nil {
 		t.Fatal("expected non-nil conn (cert expiring soon, but still valid)")
 	}

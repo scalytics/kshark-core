@@ -15,8 +15,8 @@ import (
 // MongoProber probes MongoDB/Atlas targets.
 type MongoProber struct{}
 
-func NewMongoProber() *MongoProber     { return &MongoProber{} }
-func (p *MongoProber) Type() string    { return "mongodb" }
+func NewMongoProber() *MongoProber  { return &MongoProber{} }
+func (p *MongoProber) Type() string { return "mongodb" }
 
 func (p *MongoProber) Probe(ctx context.Context, target ProbeTarget) []ProbeStep {
 	var steps []ProbeStep

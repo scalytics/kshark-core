@@ -242,10 +242,10 @@ func TestClassifyMongoError(t *testing.T) {
 
 func TestBuildMongoURI(t *testing.T) {
 	tests := []struct {
-		name     string
-		target   ProbeTarget
-		wantPfx  string   // expected URI prefix
-		wantParts []string // substrings that must appear
+		name       string
+		target     ProbeTarget
+		wantPfx    string   // expected URI prefix
+		wantParts  []string // substrings that must appear
 		wantAbsent []string // substrings that must not appear
 	}{
 		{

@@ -307,8 +307,8 @@ func TestSQLServerProber_WrongResponseType(t *testing.T) {
 
 func TestSQLServerProber_EncryptionValues(t *testing.T) {
 	tests := []struct {
-		name       string
-		encryption byte
+		name         string
+		encryption   byte
 		wantInDetail string
 	}{
 		{name: "encrypt OFF", encryption: tdsEncryptOff, wantInDetail: "OFF"},
@@ -371,11 +371,11 @@ func TestTDSEncryptionString(t *testing.T) {
 
 func TestParseTDSPreLoginResponse(t *testing.T) {
 	tests := []struct {
-		name       string
-		data       []byte
-		wantVer    string
-		wantEnc    byte
-		wantErr    bool
+		name    string
+		data    []byte
+		wantVer string
+		wantEnc byte
+		wantErr bool
 	}{
 		{
 			name:    "empty data",
@@ -391,15 +391,15 @@ func TestParseTDSPreLoginResponse(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "truncated option header",
-			data: []byte{tdsPreLoginVersion, 0x00}, // only 2 bytes, need 5
+			name:    "truncated option header",
+			data:    []byte{tdsPreLoginVersion, 0x00}, // only 2 bytes, need 5
 			wantErr: true,
 		},
 		{
 			name: "valid response",
 			data: func() []byte {
 				// Build a valid pre-login response with VERSION and ENCRYPTION
-				headerSize := 2*5 + 1 // 2 options * 5 + terminator
+				headerSize := 2*5 + 1                                // 2 options * 5 + terminator
 				versionData := []byte{15, 0, 0x10, 0x10, 0x00, 0x00} // 15.0.4112
 				encData := []byte{tdsEncryptOff}
 

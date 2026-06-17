@@ -14,7 +14,7 @@ import (
 // MySQLProber probes MySQL targets using the MySQL wire protocol handshake.
 type MySQLProber struct{}
 
-func NewMySQLProber() *MySQLProber { return &MySQLProber{} }
+func NewMySQLProber() *MySQLProber  { return &MySQLProber{} }
 func (p *MySQLProber) Type() string { return "mysql" }
 
 // MySQL protocol constants.
@@ -22,11 +22,11 @@ const (
 	mysqlDefaultPort = 3306
 
 	// Capability flags (selected)
-	mysqlClientProtocol41  uint32 = 0x00000200
-	mysqlClientSecureConn  uint32 = 0x00008000
-	mysqlClientPluginAuth  uint32 = 0x00080000
-	mysqlClientConnectDB   uint32 = 0x00000008
-	mysqlClientSSL         uint32 = 0x00000800
+	mysqlClientProtocol41 uint32 = 0x00000200
+	mysqlClientSecureConn uint32 = 0x00008000
+	mysqlClientPluginAuth uint32 = 0x00080000
+	mysqlClientConnectDB  uint32 = 0x00000008
+	mysqlClientSSL        uint32 = 0x00000800
 
 	// Packet types
 	mysqlPacketOK  byte = 0x00

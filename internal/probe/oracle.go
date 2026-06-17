@@ -236,22 +236,22 @@ func buildTNSConnect(connectDescriptor string) []byte {
 	// TNS Header (8 bytes)
 	binary.Write(&buf, binary.BigEndian, uint16(totalLen)) // Packet length
 	binary.Write(&buf, binary.BigEndian, uint16(0))        // Packet checksum
-	buf.WriteByte(tnsPacketConnect)                         // Packet type
+	buf.WriteByte(tnsPacketConnect)                        // Packet type
 	buf.WriteByte(0)                                       // Reserved
 	binary.Write(&buf, binary.BigEndian, uint16(0))        // Header checksum
 
 	// Connect Header (24 bytes)
-	binary.Write(&buf, binary.BigEndian, uint16(0x0139)) // Version (313)
-	binary.Write(&buf, binary.BigEndian, uint16(0x012C)) // Compatible version (300)
-	binary.Write(&buf, binary.BigEndian, uint16(0x0000)) // Service options
-	binary.Write(&buf, binary.BigEndian, uint16(0x2000)) // SDU size (8192)
-	binary.Write(&buf, binary.BigEndian, uint16(0x7FFF)) // TDU size (32767)
-	binary.Write(&buf, binary.BigEndian, uint16(0x7F08)) // NT protocol characteristics
-	binary.Write(&buf, binary.BigEndian, uint16(0x0000)) // Max packets before ACK
-	binary.Write(&buf, binary.BigEndian, uint16(0x0100)) // Byte order
+	binary.Write(&buf, binary.BigEndian, uint16(0x0139))           // Version (313)
+	binary.Write(&buf, binary.BigEndian, uint16(0x012C))           // Compatible version (300)
+	binary.Write(&buf, binary.BigEndian, uint16(0x0000))           // Service options
+	binary.Write(&buf, binary.BigEndian, uint16(0x2000))           // SDU size (8192)
+	binary.Write(&buf, binary.BigEndian, uint16(0x7FFF))           // TDU size (32767)
+	binary.Write(&buf, binary.BigEndian, uint16(0x7F08))           // NT protocol characteristics
+	binary.Write(&buf, binary.BigEndian, uint16(0x0000))           // Max packets before ACK
+	binary.Write(&buf, binary.BigEndian, uint16(0x0100))           // Byte order
 	binary.Write(&buf, binary.BigEndian, uint16(len(connectData))) // Data length
 	binary.Write(&buf, binary.BigEndian, dataOffset)               // Data offset
-	binary.Write(&buf, binary.BigEndian, uint32(0))      // Max receivable data
+	binary.Write(&buf, binary.BigEndian, uint32(0))                // Max receivable data
 
 	// Connect data
 	buf.Write(connectData)

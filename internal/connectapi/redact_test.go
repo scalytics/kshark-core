@@ -7,12 +7,12 @@ import (
 
 func TestRedactConnectorConfig(t *testing.T) {
 	cfg := map[string]string{
-		"connector.class":    "com.mongodb.kafka.connect.MongoSinkConnector",
-		"connection.uri":     "mongodb+srv://user:pass@host/db",
+		"connector.class":     "com.mongodb.kafka.connect.MongoSinkConnector",
+		"connection.uri":      "mongodb+srv://user:pass@host/db",
 		"connection.password": "secret123",
-		"database":           "analytics",
-		"api.key":            "mykey",
-		"api.secret":         "mysecret",
+		"database":            "analytics",
+		"api.key":             "mykey",
+		"api.secret":          "mysecret",
 	}
 
 	redacted := RedactConnectorConfig(cfg)
@@ -151,8 +151,8 @@ func TestRedactMongoURI_ContainsRedactedMarker(t *testing.T) {
 
 func TestRedactConnectorConfig_TokenField(t *testing.T) {
 	cfg := map[string]string{
-		"bearer.token":    "secret-token-value",
-		"normal.field":    "visible",
+		"bearer.token": "secret-token-value",
+		"normal.field": "visible",
 	}
 	redacted := RedactConnectorConfig(cfg)
 	if redacted["bearer.token"] != "[REDACTED]" {
