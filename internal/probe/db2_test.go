@@ -130,9 +130,9 @@ func TestEBCDICRoundTrip(t *testing.T) {
 func TestParseSecurityCheckCode(t *testing.T) {
 	// Build a mock SECCHKRD response data with SECCHKCD = 0x0000 (success)
 	data := make([]byte, 6)
-	binary.BigEndian.PutUint16(data[0:2], 6)      // length
+	binary.BigEndian.PutUint16(data[0:2], 6)          // length
 	binary.BigEndian.PutUint16(data[2:4], cpSECCHKCD) // code point
-	binary.BigEndian.PutUint16(data[4:6], 0x0000)  // success
+	binary.BigEndian.PutUint16(data[4:6], 0x0000)     // success
 
 	code, err := parseSecurityCheckCode(data)
 	if err != nil {

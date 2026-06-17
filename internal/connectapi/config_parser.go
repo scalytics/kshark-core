@@ -16,15 +16,15 @@ import (
 type ConnectorType string
 
 const (
-	TypeMongoDB    ConnectorType = "mongodb"
-	TypeDB2        ConnectorType = "db2"
-	TypePostgreSQL ConnectorType = "postgresql"
-	TypeMySQL      ConnectorType = "mysql"
-	TypeSQLServer  ConnectorType = "sqlserver"
-	TypeOracle         ConnectorType = "oracle"
-	TypeRedis          ConnectorType = "redis"
-	TypeElasticsearch  ConnectorType = "elasticsearch"
-	TypeUnknown        ConnectorType = "unknown"
+	TypeMongoDB       ConnectorType = "mongodb"
+	TypeDB2           ConnectorType = "db2"
+	TypePostgreSQL    ConnectorType = "postgresql"
+	TypeMySQL         ConnectorType = "mysql"
+	TypeSQLServer     ConnectorType = "sqlserver"
+	TypeOracle        ConnectorType = "oracle"
+	TypeRedis         ConnectorType = "redis"
+	TypeElasticsearch ConnectorType = "elasticsearch"
+	TypeUnknown       ConnectorType = "unknown"
 )
 
 // ParsedConnector holds the result of parsing a connector configuration.

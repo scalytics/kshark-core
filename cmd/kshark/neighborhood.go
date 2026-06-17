@@ -301,13 +301,13 @@ func hasNeighborhoodRows(r *Report, host string) bool {
 
 // connectorNeighborhoodPortsMap maps connector types to their default neighborhood ports.
 var connectorNeighborhoodPortsMap = map[string][]int{
-	"mongodb":    {27017, 27018, 27019, 443},
-	"postgresql": {5432, 5433, 443},
-	"db2":        {50000, 50001, 446, 443},
-	"mysql":      {3306, 3307, 443},
-	"sqlserver":  {1433, 1434, 443},
-	"oracle":     {1521, 1522, 443},
-	"redis":      {6379, 6380, 443},
+	"mongodb":       {27017, 27018, 27019, 443},
+	"postgresql":    {5432, 5433, 443},
+	"db2":           {50000, 50001, 446, 443},
+	"mysql":         {3306, 3307, 443},
+	"sqlserver":     {1433, 1434, 443},
+	"oracle":        {1521, 1522, 443},
+	"redis":         {6379, 6380, 443},
 	"elasticsearch": {9200, 9300, 443},
 }
 
