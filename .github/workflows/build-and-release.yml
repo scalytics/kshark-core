@@ -32,7 +32,9 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          # Pinned: `latest` drifts and newer gosec rules (G703/G704) fail CI on
+          # patterns kshark guards at runtime. Bump deliberately + re-validate.
+          version: v2.6.0
 
       - name: Build
         run: CGO_ENABLED=0 go build -o kshark ./cmd/kshark
