@@ -118,6 +118,9 @@ func main() {
 			}
 			runTrend(lastN)
 			return
+		case "validate-blueprint":
+			runValidateBlueprint(os.Args[2:])
+			return
 		}
 	}
 

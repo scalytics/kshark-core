@@ -82,6 +82,7 @@ type Report struct {
 	Analysis   *AnalysisMeta         `json:"analysis,omitempty"`
 	Run        *RunMeta              `json:"run,omitempty"`
 	Artifacts  *ArtifactsMeta        `json:"artifacts,omitempty"`
+	BVB        *BVB                  `json:"bvb,omitempty"`
 	HasFailed  bool                  `json:"-"`
 }
 
@@ -118,12 +119,12 @@ type ParamMeta struct {
 }
 
 type ArtifactsMeta struct {
-	LogFile       string `json:"log_file,omitempty"`
-	LogSHA256     string `json:"log_sha256,omitempty"`
-	LogContent    string `json:"log_content,omitempty"`
-	PromptFile    string `json:"prompt_file,omitempty"`
-	PromptSHA256  string `json:"prompt_sha256,omitempty"`
-	PromptContent string `json:"prompt_content,omitempty"`
+	LogFile            string `json:"log_file,omitempty"`
+	LogSHA256          string `json:"log_sha256,omitempty"`
+	LogContent         string `json:"log_content,omitempty"`
+	PromptFile         string `json:"prompt_file,omitempty"`
+	PromptSHA256       string `json:"prompt_sha256,omitempty"`
+	PromptContent      string `json:"prompt_content,omitempty"`
 	ReportChecksumFile string `json:"report_checksum_file,omitempty"`
 	ReportChecksum     string `json:"report_checksum,omitempty"`
 }

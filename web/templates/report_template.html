@@ -107,6 +107,41 @@
             <p>Generated on {{.Report.FinishedAt.Format "January 2, 2006 at 3:04 PM MST"}}</p>
         </header>
 
+        {{if .Report.BVB}}
+        <section id="bvb-verdict">
+            <h2>Blueprint Validation</h2>
+            <div class="card">
+                <h3>Verdict: {{.Report.BVB.Verdict.Status}}</h3>
+                <p>Blueprint {{.Report.BVB.BlueprintID}} &middot; routine {{.Report.BVB.RoutineID}}@{{.Report.BVB.RoutineVersion}} &middot; backend {{.Report.BVB.Backend.Family}}{{if .Report.BVB.Backend.Version}} {{.Report.BVB.Backend.Version}}{{end}}</p>
+                <p>PASS {{.Report.BVB.Verdict.Pass}} &middot; FAIL {{.Report.BVB.Verdict.Fail}} &middot; SKIP {{.Report.BVB.Verdict.Skip}} (tier-excluded {{.Report.BVB.Verdict.TierExcluded}}) of {{.Report.BVB.Verdict.Total}}</p>
+            </div>
+            <table>
+                <thead><tr><th>Check</th><th>Kind</th><th>Tier</th><th>Status</th><th>Claim</th><th>ms</th></tr></thead>
+                <tbody>
+                {{range .Report.BVB.Checks}}
+                <tr>
+                    <td>{{.ID}}</td>
+                    <td>{{.Kind}}</td>
+                    <td>{{.Tier}}</td>
+                    <td>{{.Status}}{{if .SkipReason}} ({{.SkipReason}}){{end}}</td>
+                    <td>{{.Claim}}</td>
+                    <td>{{.DurationMs}}</td>
+                </tr>
+                {{end}}
+                </tbody>
+            </table>
+            {{if .Report.BVB.ImageDigests}}
+            <h3>Image digests</h3>
+            <ul class="card-list">
+                {{range .Report.BVB.ImageDigests}}
+                <li>{{.Image}} @ {{.Digest}}{{if .Platforms}} ({{range $i, $p := .Platforms}}{{if $i}}, {{end}}{{$p}}{{end}}){{end}}</li>
+                {{end}}
+            </ul>
+            {{end}}
+        </section>
+        {{end}}
+
+        {{if .Analysis}}
         <section id="ai-analysis">
             <h2>AI-Powered Analysis</h2>
             <div class="card">
@@ -129,6 +164,7 @@
             </ul>
             <p class="disclaimer">{{.Analysis.Disclaimer}}</p>
         </section>
+        {{end}}
 
         <section id="summary">
             <h2>Scan Summary</h2>
