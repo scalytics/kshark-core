@@ -1,0 +1,77 @@
+# Blueprint-Validation-Routine for bp-006-citizen360 (SPEC-14 section 9).
+#
+# This is the runtime, attachable twin of the bp-006 Go scenarios
+# (citizen360_smoke_test.go) and the DVP parity matrix. kshark runs it as a
+# real Kafka client through the kafSCALE proxy (the bootstrap.servers in the
+# -props file), so it executes on a customer cluster the distro team cannot
+# kubectl into.
+#
+# Each check binds to its CLAIMS_MAP claim id (SCEN-bp006-01..05) so a green
+# routine is a results-aware proof of the datasheet promises.
+#
+# Run:
+#   kshark validate-blueprint \
+#     --bp bp-006-citizen360 \
+#     --routine examples/validation-routine.bp-006-citizen360.yaml \
+#     -props client.properties \
+#     --out reports/bvb-bp006.json \
+#     --bundle out/bvb-bp006.tar.gz
+
+routine_id: bp-006-citizen360
+routine_version: 0.1.0
+blueprint: bp-006-citizen360
+manifest_version: "1.0"
+backend:
+  family: kafscale          # override for a cross-backend run via --backend
+
+checks:
+  - id: SCEN-bp006-01
+    kind: topic-presence
+    claim: "the five source simulators produce to the five citizen.* topics"
+    topics:
+      - citizen.social.posts
+      - citizen.forum.threads
+      - citizen.camera.sightings
+      - citizen.payment.transactions
+      - citizen.directory.lookups
+
+  - id: SCEN-bp006-02
+    kind: schema-presence
+    claim: "each source topic has a registered value schema"
+    subjects:
+      - citizen.social.posts-value
+      - citizen.forum.threads-value
+      - citizen.camera.sightings-value
+      - citizen.payment.transactions-value
+      - citizen.directory.lookups-value
+
+  - id: SCEN-bp006-03
+    kind: component-health
+    claim: "the application plane and the Terminal are reachable"
+    components:
+      - citizen-bridge
+      - kafgraph
+      - kafclaw
+      - kafsiem
+      - lascaris-terminal
+    params:
+      probes:
+        citizen-bridge:    { url_env: SMOKE_CITIZEN_BRIDGE_URL, path: "/healthz" }
+        kafgraph:          { url_env: SMOKE_KAFGRAPH_URL,       path: "/healthz" }
+        kafclaw:           { url_env: SMOKE_KAFCLAW_URL,        path: "/healthz" }
+        kafsiem:           { url_env: SMOKE_KAFSIEM_URL,        path: "/healthz" }
+        lascaris-terminal: { url_env: SMOKE_TERMINAL_URL,       path: "/healthz" }
+
+  - id: SCEN-bp006-04
+    kind: http-check
+    tier: needs-headroom
+    claim: "a person-scoped query returns cross-source results"
+    http:
+      url_env: SMOKE_TERMINAL_URL
+      path: "/api/person?id=P0001"
+
+  - id: SCEN-bp006-05
+    kind: topic-presence
+    claim: "each query advances the append-only audit topic"
+    topics:
+      - citizen.audit.queries
