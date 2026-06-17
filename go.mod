@@ -3,7 +3,7 @@ module github.com/scalytics/kshark-core
 go 1.25.0
 
 require (
-	github.com/jackc/pgx/v5 v5.9.0
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/segmentio/kafka-go v0.4.49
 	go.mongodb.org/mongo-driver/v2 v2.1.0
 	gopkg.in/yaml.v3 v3.0.1
