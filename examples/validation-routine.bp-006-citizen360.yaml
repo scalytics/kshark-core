@@ -29,21 +29,21 @@ checks:
     kind: topic-presence
     claim: "the five source simulators produce to the five citizen.* topics"
     topics:
-      - citizen.persons
-      - citizen.addresses
-      - citizen.vehicles
-      - citizen.contacts
-      - citizen.cases
+      - citizen.social.posts
+      - citizen.forum.threads
+      - citizen.camera.sightings
+      - citizen.payment.transactions
+      - citizen.directory.lookups
 
   - id: SCEN-bp006-02
     kind: schema-presence
     claim: "each source topic has a registered value schema"
     subjects:
-      - citizen.persons-value
-      - citizen.addresses-value
-      - citizen.vehicles-value
-      - citizen.contacts-value
-      - citizen.cases-value
+      - citizen.social.posts-value
+      - citizen.forum.threads-value
+      - citizen.camera.sightings-value
+      - citizen.payment.transactions-value
+      - citizen.directory.lookups-value
 
   - id: SCEN-bp006-03
     kind: component-health
