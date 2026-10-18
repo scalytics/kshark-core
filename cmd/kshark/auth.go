@@ -1,4 +1,4 @@
-// Copyright 2024-2026 Scalytics GmbH and kshark Contributors
+// Copyright 2024-2026 Scalytics, Inc. and kshark Contributors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
