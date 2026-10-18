@@ -3,6 +3,7 @@ layout: default
 title: Acceptance Protocol
 nav_order: 3.5
 ---
+{% raw %}
 
 # Post-Deployment Acceptance Protocol
 
@@ -387,3 +388,4 @@ sha256sum report.json
 **Document Version:** 1.0
 **Author:** kshark Development Team
 **Last Review:** 2026-03-27
+{% endraw %}

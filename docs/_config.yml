@@ -19,11 +19,13 @@ color_scheme: dark
 aux_links:
   "GitHub":
     - "https://github.com/scalytics/kshark-core"
+  "Scalytics open source":
+    - "https://www.scalytics.io/open-source"
 
 aux_links_new_tab: true
 
 # Footer
-footer_content: "Copyright &copy; 2024-2026 Scalytics GmbH. Licensed under Apache 2.0."
+footer_content: "Copyright &copy; 2024-2026 Scalytics GmbH. Licensed under Apache 2.0. <a href=\"https://github.com/scalytics/kshark-core\">Source on GitHub</a> · <a href=\"https://www.scalytics.io/open-source\">Scalytics open source</a>"
 
 # Back to top link
 back_to_top: true
@@ -34,6 +36,8 @@ heading_anchors: true
 
 # Exclude from build
 exclude:
+  - Gemfile
+  - Gemfile.lock
   - .DS_Store
   - images/.DS_Store
   - SSRF_FIX_GUIDE.md

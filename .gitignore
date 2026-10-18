@@ -32,3 +32,5 @@ analysis_report.html
 
 # GoReleaser
 dist/
+docs/_includes/CHANGELOG.md
+docs/_includes/CONTRIBUTING.md
