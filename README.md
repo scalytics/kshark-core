@@ -982,6 +982,18 @@ limitations under the License.
 
 ---
 
+## Related projects
+
+kshark-core is also an example of how agents can use our tools to debug Kafka clusters: the JSON reports are built for scripts and AI agents to read.
+
+- [KafClaw](https://github.com/KafClaw/KafClaw): agent runtime in Go that connects AI agents through Kafka topics. It ships a `kafclaw kshark` command for Kafka diagnostics.
+- [KafScale](https://github.com/KafScale/platform): Kafka-compatible streaming that keeps the log in S3.
+- [kaf-mirror](https://github.com/scalytics/kaf-mirror): Kafka-to-Kafka replication with a web dashboard, REST API and CLI.
+
+All projects are listed at [scalytics.io/open-source](https://www.scalytics.io/open-source). For governed AI agents on Kafka with commercial support, see [Lascaris](https://www.scalytics.io/lascaris).
+
+---
+
 ## Support
 
 - **Documentation:** [docs/](docs/)
