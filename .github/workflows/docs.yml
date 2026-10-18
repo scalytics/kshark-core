@@ -29,6 +29,12 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v6
 
+      - name: Copy root docs into the Jekyll includes
+        run: |
+          mkdir -p docs/_includes
+          cp CHANGELOG.md docs/_includes/CHANGELOG.md
+          cp CONTRIBUTING.md docs/_includes/CONTRIBUTING.md
+
       - name: Build with Jekyll
         uses: actions/jekyll-build-pages@v1
         with:

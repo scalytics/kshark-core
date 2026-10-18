@@ -3,6 +3,7 @@ layout: default
 title: Architecture
 nav_order: 2
 ---
+{% raw %}
 
 # kshark Architecture Overview
 
@@ -1212,3 +1213,4 @@ The layered testing approach ensures thorough validation of all connectivity com
 **Author:** kshark Development Team
 **Last Review:** 2026-03-26
 **Next Review:** 2026-06-26
+{% endraw %}
