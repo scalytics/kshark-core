@@ -2,6 +2,8 @@ module github.com/scalytics/kshark-core
 
 go 1.25.0
 
+toolchain go1.26.10
+
 require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/segmentio/kafka-go v0.4.51
