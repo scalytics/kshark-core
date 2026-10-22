@@ -68,7 +68,8 @@ brews:
     repository:
       owner: scalytics
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: '{{ index .Env "HOMEBREW_TAP_GITHUB_TOKEN" }}'
+    skip_upload: '{{ if not (index .Env "HOMEBREW_TAP_GITHUB_TOKEN") }}true{{ end }}'
     homepage: "https://github.com/scalytics/kshark-core"
     description: "Kafka connectivity diagnostic tool — layered probe from DNS to produce/consume"
     license: "Apache-2.0"
