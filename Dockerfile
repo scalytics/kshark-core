@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /kshark ./cmd/kshark
 FROM alpine:3.21
 
 # It's good practice to run as a non-root user
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+RUN addgroup -S -g 65532 appgroup && adduser -S -u 65532 -G appgroup appuser
 
 # Copy the compiled binary from the builder stage
 COPY --from=builder /kshark /usr/local/bin/kshark
@@ -31,6 +31,7 @@ COPY client.properties.example /app/client.properties
 
 # Set the working directory
 WORKDIR /app
+RUN mkdir -p /app/reports && chown appuser:appgroup /app/reports
 
 # Set the user
 USER appuser

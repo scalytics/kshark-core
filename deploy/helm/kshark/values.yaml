@@ -2,17 +2,18 @@
 #
 # Deployed as a CronJob that runs a diagnostic probe on schedule.
 # For ad-hoc probes, create a Job from the same image:
-#   kubectl create job kshark-probe-$(date +%s) --from=cronjob/kshark -n scalytics
+#   kubectl create job kshark-probe-$(date +%s) --from=cronjob/kshark
 
 image:
-  # Local-only / NAS-pinned (PLAN-06 E-03 / audit F-1). Iter-8 flips
-  # to ghcr.io. Override via `--set image.repository=...` in any
-  # other environment.
-  repository: 192.168.0.131:5100/scalytics/kshark
-  tag: "v1.1.0"
+  # No container image is published. Build one from the Dockerfile in
+  # this repository, push it to a registry your cluster can pull from,
+  # and set image.repository and image.tag to match.
+  repository: kshark
+  tag: "1.1.1"
   pullPolicy: IfNotPresent
 
-# Where kshark reports are written. A PVC is mounted at /reports.
+# Where kshark reports are written. kshark writes to reports/ under its
+# working directory, so the PVC is mounted at /app/reports.
 # Change storageClass for cloud storage (e.g. "gp3" on EKS).
 persistence:
   enabled: true
@@ -29,10 +30,9 @@ schedule:
   failedJobsHistoryLimit: 3
 
 # Probe configuration. `args` is passed to the kshark binary directly.
-# For bp-001, a full probe against all components is recommended:
-#   args: ["probe", "--all", "--output", "/reports/latest.html"]
-#
-# For standalone (no bp-001), a simple --help run proves the image runs.
+# The default --help run only proves the image starts. For a real probe,
+# mount a client.properties file and pass for example:
+#   args: ["-props", "/config/client.properties", "-y", "-json", "latest.json"]
 probe:
   args: ["--help"]
 
@@ -44,12 +44,9 @@ resources:
     cpu: 100m
     memory: 128Mi
 
-# Pod security — kshark Dockerfile runs as UID 65532 (appuser).
-# PSA-restricted-compatible (PLAN-06 E-04 / audit F-4). The chart key
-# `securityContext` (container-level) predates the cross-chart
-# `containerSecurityContext` convention used in newer SAO charts;
-# kept as-is for backward compatibility with consumers that already
-# override it. Both names render the same in-pod block.
+# Pod security. The Dockerfile runs kshark as UID and GID 65532 (appuser).
+# These settings are compatible with the Kubernetes "restricted" Pod
+# Security Standard. `securityContext` is the container-level block.
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532
