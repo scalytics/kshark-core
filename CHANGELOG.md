@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Neighborhood scan: when every probed port answers "connection refused", the result is `service_not_listening`, as documented. It was `host_unreachable` when ICMP failed and `all_tcp_blocked` when ICMP worked, even though a refused connection proves the host is reachable. A mix of refused and timed-out ports with no open port is now `mixed_filtering` instead of `host_unreachable` or `all_tcp_blocked`.
+
 ### Added
 - CI/CD pipeline with GitHub Actions (build, test, vet, govulncheck)
 - Weekly security scan workflow

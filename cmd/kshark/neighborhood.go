@@ -176,21 +176,21 @@ func classifyRestriction(results []PortProbeResult, icmpOK bool) RestrictionDiag
 		d.SuggestedAction = "Network path is clear. Check application-layer configuration (auth, ACLs, listener settings)."
 
 	// All ports blocked, ICMP blocked — host unreachable
-	case len(openPorts) == 0 && !icmpOK:
+	case len(openPorts) == 0 && len(refusedPorts) == 0 && !icmpOK:
 		d.Classification = "host_unreachable"
 		d.Confidence = "high"
 		d.Evidence = []string{
-			fmt.Sprintf("All %d probed TCP ports are blocked", len(blockedPorts)+len(refusedPorts)),
+			fmt.Sprintf("All %d probed TCP ports are blocked", len(blockedPorts)),
 			"ICMP ping also fails",
 		}
 		d.SuggestedAction = "Host appears completely unreachable. Check routing, DNS resolution, and VPC/subnet connectivity."
 
 	// All ports blocked, ICMP open — all TCP blocked
-	case len(openPorts) == 0 && icmpOK:
+	case len(openPorts) == 0 && len(refusedPorts) == 0 && icmpOK:
 		d.Classification = "all_tcp_blocked"
 		d.Confidence = "high"
 		d.Evidence = []string{
-			fmt.Sprintf("All %d probed TCP ports are blocked", len(blockedPorts)+len(refusedPorts)),
+			fmt.Sprintf("All %d probed TCP ports are blocked", len(blockedPorts)),
 			"ICMP ping succeeds — host is reachable at L3",
 		}
 		d.SuggestedAction = "All TCP traffic is blocked. Check NSG/Security Group rules for inbound TCP on required ports."
