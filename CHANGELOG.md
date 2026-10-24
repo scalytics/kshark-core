@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Docker image: `/app/reports` exists and is owned by `appuser`, so reports can be written in the container. `appuser` now has UID and GID 65532, which matches the Helm chart's security context.
+- Helm chart: the reports volume is mounted at `/app/reports`, where kshark writes. It was mounted at `/reports`, so with a read-only root filesystem the reports never reached the PVC. The default image is now `kshark:1.1.1` instead of a private registry address, and the planning notes and the example with nonexistent flags were removed from `values.yaml`. Chart version 0.1.2, appVersion 1.1.1.
+
 ### Added
 - CI/CD pipeline with GitHub Actions (build, test, vet, govulncheck)
 - Weekly security scan workflow
