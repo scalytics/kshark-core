@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `-bundle` works without a value, as the README documents. A bare `-bundle` at the end of the command failed with `flag needs an argument`, and `-bundle -tf-state=x` used `-tf-state=x` as the bundle file name and dropped the Terraform state. Use `-bundle` for the default name or `-bundle=path` for a custom path. `-bundle path` with a space no longer sets the path.
+
 ### Added
 - CI/CD pipeline with GitHub Actions (build, test, vet, govulncheck)
 - Weekly security scan workflow
