@@ -4,10 +4,10 @@
 
 **A powerful command-line diagnostic tool for Apache Kafka and connector target connectivity**
 
-`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire agent-to-broker communication path — and now also validates connectivity from Kafka Connect workers to their source and sink database targets (MongoDB, PostgreSQL, DB2). It systematically tests every layer from DNS resolution through TLS security to application protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
+`kshark` acts like a network sniffer for Kafka, providing comprehensive health checks of your entire agent-to-broker communication path. It also validates connectivity from Kafka Connect workers to their source and sink database targets (MongoDB, PostgreSQL, DB2, MySQL, SQL Server, Oracle, Redis, Elasticsearch). It systematically tests every layer from DNS resolution through TLS security to application protocol-level interactions, helping developers and SREs quickly identify and resolve connectivity issues.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/badge/Go-1.23-blue.svg)](https://golang.org/)
+[![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org/)
 
 ---
 
@@ -17,16 +17,16 @@
 
 Without reliable, structured tools, AI agents are limited to conversation. With them, they become autonomous operators capable of real diagnostic work. `kshark` is designed from the ground up to be agent-executable:
 
-- **Deterministic Output:** Structured JSON and HTML reports that agents can parse, analyze, and act upon
+- **Deterministic Output:** Structured JSON reports that agents can parse, analyze, and act upon
 - **Layered Diagnostics:** Clear failure isolation (L3→L4→L5-6→L7) so agents know exactly where problems occur
 - **Zero Human Intervention:** Fully automated execution with `-y` flag, timeout controls, and exit codes
-- **Rich Context:** Every test returns actionable data — not just pass/fail, but metrics, timestamps, and error details
+- **Rich Context:** Every test returns actionable data, not just pass/fail: but metrics, timestamps, and error details
 
 **Why This Matters:**
 
 Human operators diagnose Kafka issues by running multiple commands: `nslookup`, `telnet`, `openssl s_client`, `kafka-console-producer`. They correlate failures, infer root causes, and retry with different parameters.
 
-AI agents need to do the same work — but they need tools that package that workflow into a single, reliable interface. `kshark` is that interface for Kafka connectivity validation.
+AI agents need to do the same work, but they need tools that package that workflow into a single, reliable interface. `kshark` is that interface for Kafka connectivity validation.
 
 When an agent needs to validate a client configuration, diagnose a connection failure, or verify topic accessibility, `kshark` provides the structured, comprehensive output required to make informed decisions and take corrective action.
 
@@ -70,7 +70,7 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 
 -   **End-to-End Testing:** Full produce-and-consume loop validation to verify complete data flow
 
--   **Network Restriction Detection:** When TCP fails, automatically scans nearby ports (80, 443, 9092-9094) and compares ICMP vs TCP reachability to classify firewall/NSG restrictions
+-   **Network Restriction Detection:** When TCP fails, automatically scans nearby ports (80, 443, 9092-9094, 8081, 8083) and compares ICMP vs TCP reachability to classify firewall/NSG restrictions
 
 -   **Diagnostics Bundle:** Package reports, logs, redacted Terraform state, and system context into a portable `.tar.gz` with ready-to-use export commands (scp, docker cp, kubectl cp)
 
@@ -79,9 +79,9 @@ When an agent needs to validate a client configuration, diagnose a connection fa
     -   SASL/SCRAM-SHA-256
     -   SASL/SCRAM-SHA-512
     -   Mutual TLS (mTLS)
-    -   SASL/GSSAPI (Kerberos) - with build tag
+    -   SASL/GSSAPI (Kerberos) is detected in the configuration but not implemented. kshark then connects without SASL authentication.
 
-### AI-Powered Analysis (Premium)
+### AI-Powered Analysis (optional, `-analyze`)
 
 -   **Intelligent Root Cause Detection:** Identifies which layer is causing issues
 -   **Actionable Recommendations:** Provides specific fix suggestions
@@ -93,13 +93,11 @@ When an agent needs to validate a client configuration, diagnose a connection fa
 -   **Familiar Configuration:** Java properties file format (works with existing Kafka configs)
 -   **Rich Output Formats:**
     -   Color-coded console output
-    -   Detailed HTML reports with visual summaries
-    -   Machine-readable JSON export (Premium)
--   **Quick Presets:** Pre-configured templates for common Kafka distributions
-    -   Confluent Cloud
-    -   Bitnami
-    -   AWS MSK
-    -   Plaintext (development)
+    -   Machine-readable JSON export (`-json`)
+    -   HTML report with the AI analysis (written only after a successful `-analyze` run, and by `validate-blueprint`)
+-   **Quick Presets:** fill in `security.protocol` and `sasl.mechanism` when they are missing
+    -   `cc-plain`: Confluent Cloud API key and secret (SASL_SSL, PLAIN)
+    -   `self-scram`: self-managed SCRAM (SASL_SSL, SCRAM-SHA-512)
 
 ### Production-Ready
 
@@ -141,7 +139,7 @@ EOF
 ### B) Connector Target Probe via Connect API
 
 ```bash
-# Probe a MongoDB connector's target — reads config from Kafka Connect REST API
+# Probe a MongoDB connector's target. Reads config from Kafka Connect REST API
 ./kshark -y --connect-url https://connect.example.com:8083 \
             --connector-name my-mongo-sink
 ```
@@ -188,30 +186,33 @@ EOF
 
 ### Option 1: Download Pre-built Binary (Recommended)
 
-Download the latest release for your platform from the [Releases page](https://github.com/scalytics/kshark-core/releases):
+Download a release for your platform from the [Releases page](https://github.com/scalytics/kshark-core/releases). Archives are named `kshark_<version>_<os>_<arch>`, for linux, darwin and windows on amd64 and arm64. The examples use v1.1.1:
 
 ```bash
 # Linux (amd64)
-wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
-tar -xzf kshark-linux-amd64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
+tar -xzf kshark_1.1.1_linux_amd64.tar.gz
 
-# macOS (arm64 - Apple Silicon)
-wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-darwin-arm64.tar.gz
-tar -xzf kshark-darwin-arm64.tar.gz
+# macOS (arm64, Apple Silicon)
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_darwin_arm64.tar.gz
+tar -xzf kshark_1.1.1_darwin_arm64.tar.gz
 
 # Windows (amd64)
-wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-windows-amd64.zip
-unzip kshark-windows-amd64.zip
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_windows_amd64.zip
+unzip kshark_1.1.1_windows_amd64.zip
 ```
 
-Verify the checksum:
+Verify the checksum of the archive you downloaded:
 ```bash
-sha256sum -c checksums.txt
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/checksums.txt
+sha256sum -c --ignore-missing checksums.txt
 ```
+
+`checksums.txt` is signed with cosign (keyless). The signature is published as `checksums.txt.sig`.
 
 ### Option 2: Build from Source
 
-**Prerequisites:** Go 1.23 or newer
+**Prerequisites:** Go 1.25 or newer (`go.mod`). Release builds use Go 1.26.10.
 
 ```bash
 # Clone the repository
@@ -285,33 +286,27 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 ./kshark -props client.properties -topic orders \
     -bundle -tf-state=terraform.tfstate
 
-# Generate HTML report
-./kshark -props client.properties -topic my-topic
-# Report saved to: reports/analysis_report_<hostname>_<timestamp>.html
-```
-
-### Premium Features (Requires license.key)
-
-```bash
-# AI-powered analysis
-./kshark -props client.properties -topic my-topic --analyze
-
-# Export to JSON
+# Export to JSON (written to reports/report.json)
 ./kshark -props client.properties -json report.json
+
+# AI analysis (needs ai_config.json, see Configuration)
+# Writes reports/analysis_report_<hostname>_<timestamp>.html
+./kshark -props client.properties -topic my-topic -analyze
 ```
+
+kshark writes all reports and the default log to `reports/` in the current working directory. Only the file name of `-json` is used.
 
 ### Using Presets
 
 ```bash
-# Confluent Cloud
+# Confluent Cloud: SASL_SSL with PLAIN
 ./kshark --preset cc-plain -props client.properties
 
-# AWS MSK with IAM
+# Self-managed SCRAM: SASL_SSL with SCRAM-SHA-512
 ./kshark --preset self-scram -props client.properties
-
-# Local development (no security)
-./kshark --preset plaintext -props client.properties
 ```
+
+A preset only sets `security.protocol` and `sasl.mechanism` when the properties file does not set them. `sasl.username` and `sasl.password` must still be in the file. Other preset names are ignored.
 
 ### Command-Line Flags
 
@@ -320,7 +315,7 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 | `-props` | Path to properties file | (optional*) | `-props config.properties` |
 | `-topic` | Comma-separated topics to test | (optional) | `-topic orders,payments` |
 | `-group` | Consumer group for probe | (ephemeral) | `-group kshark-probe` |
-| `--preset` | Configuration preset | (none) | `--preset cc-plain` |
+| `--preset` | Configuration preset (`cc-plain|self-scram`) | (none) | `--preset cc-plain` |
 | `-timeout` | Global timeout for entire scan | 60s | `-timeout 120s` |
 | `-kafka-timeout` | Kafka metadata/dial timeout | 10s | `-kafka-timeout 20s` |
 | `-op-timeout` | Produce/consume timeout | 10s | `-op-timeout 30s` |
@@ -331,15 +326,17 @@ docker run -v $(pwd):/config kshark:latest -props /config/client.properties
 | `-diag` | Enable traceroute/MTU diagnostics | true | `-diag=false` |
 | `-probe-direction` | Probe direction: `up` (fail-fast) or `full` (all layers) | `up` | `-probe-direction=full` |
 | `-neighborhood` | Force port neighborhood scan (auto on TCP failure) | false | `-neighborhood` |
-| `-neighborhood-ports` | Custom ports for neighborhood scan | `80,443,9092,...` | `-neighborhood-ports=443,9092,5432` |
+| `-neighborhood-ports` | Custom ports for neighborhood scan | `80,443,9092,9093,9094,8081,8083` | `-neighborhood-ports=443,9092,5432` |
 | `-bundle` | Create diagnostics bundle (.tar.gz) | (none) | `-bundle` or `-bundle=out.tar.gz` |
 | `-tf-state` | Terraform state file for bundle (redacted) | (none) | `-tf-state=terraform.tfstate` |
 | `-tf-plan` | Terraform plan output for bundle (redacted) | (none) | `-tf-plan=plan.txt` |
-| `-log` | Write detailed scan log to file | auto | `-log /tmp/kshark.log` |
+| `-log` | Write detailed scan log to file | `reports/kshark-<timestamp>.log` | `-log /tmp/kshark.log` |
+| `-log-format` | Log format (`text|json`) | `text` | `-log-format json` |
 | `--analyze` | Enable AI analysis | false | `--analyze` |
 | `-no-ai` | Skip AI analysis even if enabled | false | `-no-ai` |
 | `-provider` | AI provider name from `ai_config.json` | (default) | `-provider openai` |
-| `-json` | Export to JSON file | (none) | `-json output.json` |
+| `-json` | Export to JSON file in `reports/` | (none) | `-json output.json` |
+| `-watch` | Re-run the scan at this interval (0 = single run) | `0` | `-watch 5m` |
 | `-y` | Skip confirmation prompt | false | `-y` |
 | `--version` | Show version info | - | `--version` |
 | `--connect-url` | Kafka Connect REST API URL | (none) | `--connect-url https://connect:8083` |
@@ -564,22 +561,22 @@ See [Configuration Guide](docs/FEATURES.md#configuration-options) for complete l
 
 ### AI Configuration (Optional)
 
-For AI-powered analysis, create `ai_config.json`:
+For `-analyze`, create `ai_config.json` in the directory you run kshark from (see `ai_config.json.example`):
 
 ```json
 {
-  "provider": "openai",
-  "api_key": "sk-...",
-  "api_endpoint": "https://api.openai.com/v1/chat/completions",
-  "model": "gpt-4"
+  "default_provider": "openai",
+  "providers": {
+    "openai": {
+      "api_endpoint": "https://api.openai.com/v1/chat/completions",
+      "api_key": "YOUR_OPENAI_API_KEY",
+      "model": "gpt-4"
+    }
+  }
 }
 ```
 
-Or use environment variables:
-```bash
-export KSHARK_AI_PROVIDER=openai
-export KSHARK_AI_API_KEY=sk-...
-```
+`-provider <name>` selects another entry from `providers`. There are no environment variables for the AI settings.
 
 ---
 
@@ -685,7 +682,7 @@ For detailed architecture information, see [ARCHITECTURE.md](docs/ARCHITECTURE.m
 
 ```
 kshark-core/
-├── cmd/kshark/            # Main application (15 focused source files)
+├── cmd/kshark/            # Main application (22 source files, main ones listed)
 │   ├── main.go            # Entry point, CLI flags, watch mode
 │   ├── scan.go            # Scan orchestration, config, REST proxy
 │   ├── ai.go              # AI analysis prompt building + API client
@@ -707,7 +704,8 @@ kshark-core/
 │   │   ├── common.go      # Shared DNS/TCP/TLS probe helpers
 │   │   ├── mongodb.go     # MongoDB prober (mongo-driver)
 │   │   ├── postgres.go    # PostgreSQL prober (pgx)
-│   │   └── db2.go         # DB2 prober (custom DRDA wire protocol)
+│   │   ├── db2.go         # DB2 prober (custom DRDA wire protocol)
+│   │   └── mysql.go, sqlserver.go, oracle.go, redis.go, elasticsearch.go
 │   └── connectapi/        # Kafka Connect integration
 │       ├── client.go      # Connect REST API client (SSRF-protected)
 │       ├── config_parser.go # Connector type detection + config extraction
@@ -720,6 +718,7 @@ kshark-core/
 │   └── run-tests.sh       # 10 automated integration tests
 ├── web/templates/         # HTML report templates
 ├── docs/                  # Documentation
+├── deploy/helm/kshark/    # Helm chart (CronJob)
 ├── Dockerfile             # Container build definition
 ├── go.mod                 # Go module (kafka-go, mongo-driver, pgx)
 ├── LICENSE                # Apache 2.0 license
@@ -747,8 +746,8 @@ kshark-core/
 
 [L5-6: Security Layer]
 ✓ TLS Handshake: TLS 1.3 successful (234ms)
-✓ Certificate: CN=broker.example.com, expires in 87 days
-⚠ Certificate Expiry: Certificate expires in <90 days
+✓ Certificate: CN=broker.example.com, expires in 21 days
+⚠ Certificate Expiry: Server certificate expires <30 days.
 
 [L7: Application Layer]
 ✓ Kafka Metadata: 3 brokers, 42 partitions
@@ -830,17 +829,16 @@ Solution: Verify credentials, check SASL mechanism matches broker config
 Common issues: Wrong mechanism (PLAIN vs SCRAM), incorrect credentials
 ```
 
-**Problem:** "license.key required" error
+**Problem:** No HTML report in `reports/`
 ```
-Solution: AI analysis and JSON export are premium features
-Option 1: Obtain a license.key file
-Option 2: Use standard console/HTML output (free)
+Solution: The HTML report is only written after a successful -analyze run.
+Check: ai_config.json exists in the working directory and has a valid API key.
 ```
 
 ### Debug Mode
 
-For verbose output, check the generated HTML report which includes:
-- Full configuration (credentials redacted)
+For details, check the scan log (`reports/kshark-<timestamp>.log`, or `-log`) and the JSON report from `-json`. Use `-log-format json` for machine-readable logs. The JSON report includes:
+- Configuration (credentials redacted)
 - Detailed error messages
 - Network diagnostic output
 - Timestamp and version information
@@ -867,7 +865,7 @@ cd kshark-core
 # Install dependencies
 go mod download
 
-# Run tests (if available)
+# Run tests
 go test ./...
 
 # Build
@@ -902,16 +900,16 @@ For security concerns and vulnerability reports, please see [SECURITY.md](docs/S
 
 ## Code Quality
 
-| Metric | Value |
-|--------|-------|
-| Statement coverage (`cmd/kshark`) | 61.6% |
+| Metric | Value (CI on main, 2026-10-22) |
+|--------|-------------------------------|
+| Statement coverage (`cmd/kshark`) | 58.9% |
 | Statement coverage (`internal/connectapi`) | 75.7% |
 | Statement coverage (`internal/probe`) | 72.3% |
-| Test functions | 261 unit + 3 fuzz |
+| Test functions | 423 unit + 4 fuzz |
 | `go vet` warnings | 0 |
 | Race conditions (`-race`) | 0 |
-| Source files | 15 (cmd) + 11 (internal) |
-| Largest file | 685 lines (`main.go`) |
+| Source files | 22 (cmd) + 15 (internal) |
+| Largest file | 688 lines (`main.go`) |
 
 Key quality properties:
 - **SSRF protection** on all HTTP paths (29 call sites) with two-tier model (DENY loopback, WARN RFC1918)
@@ -925,14 +923,14 @@ Key quality properties:
 ## Roadmap
 
 **Completed:**
-- [x] Modular architecture (14 focused source files, internal packages)
+- [x] Modular architecture (focused source files, internal packages)
 - [x] Connector target probing (MongoDB, DB2, PostgreSQL)
 - [x] SSRF protection (two-tier model)
 - [x] Enhanced AI analysis prompt (layered reasoning, confidence, severity)
 - [x] Integration testbed (Docker Compose, 10 automated tests)
 - [x] Credential redaction hardening (sasl.jaas.config, bearer tokens)
 - [x] Probe direction control (`--probe-direction=up|full`)
-- [x] Neighborhood scan — port-level restriction detection with classification
+- [x] Neighborhood scan: port-level restriction detection with classification
 - [x] PMTU black hole correlation (ICMP vs TCP cross-reference)
 - [x] Diagnostics bundle with Terraform state redaction
 - [x] Thread-safe concurrent diagnostics (parallel traceroute/MTU)

@@ -47,7 +47,7 @@ This guide covers deployment strategies for kshark across different environments
 
 ### Prerequisites
 
-- Go 1.23+ (for building from source)
+- Go 1.25+ (for building from source)
 - Access to target Kafka cluster
 - Configuration files prepared
 
@@ -56,20 +56,20 @@ This guide covers deployment strategies for kshark across different environments
 **Download:**
 ```bash
 # Linux (amd64)
-wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
-tar -xzf kshark-linux-amd64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
+tar -xzf kshark_1.1.1_linux_amd64.tar.gz
 sudo mv kshark /usr/local/bin/
 chmod +x /usr/local/bin/kshark
 
 # macOS (arm64)
-wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-darwin-arm64.tar.gz
-tar -xzf kshark-darwin-arm64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_darwin_arm64.tar.gz
+tar -xzf kshark_1.1.1_darwin_arm64.tar.gz
 sudo mv kshark /usr/local/bin/
 chmod +x /usr/local/bin/kshark
 
 # Windows (amd64)
-wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-windows-amd64.zip
-unzip kshark-windows-amd64.zip
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_windows_amd64.zip
+unzip kshark_1.1.1_windows_amd64.zip
 # Add to PATH or move to C:\Windows\System32\
 ```
 
@@ -222,9 +222,8 @@ docker run --rm \
 docker run --rm \
   -v $(pwd)/client.properties:/config/client.properties:ro \
   -v $(pwd)/ai_config.json:/app/ai_config.json:ro \
-  -v $(pwd)/license.key:/app/license.key:ro \
   -v $(pwd)/reports:/app/reports \
-  kshark:latest -props /config/client.properties --analyze -y
+  kshark:latest -props /config/client.properties -analyze -y
 ```
 
 ---
@@ -241,7 +240,6 @@ services:
     volumes:
       - ./config/client.properties:/config/client.properties:ro
       - ./config/ai_config.json:/app/ai_config.json:ro
-      - ./secrets/license.key:/app/license.key:ro
       - ./reports:/app/reports
     command: ["-props", "/config/client.properties", "-y"]
     restart: "no"
@@ -310,7 +308,6 @@ stringData:
 kubectl create secret generic kshark-credentials \
   --from-file=client.properties=./client.properties \
   --from-file=ai_config.json=./ai_config.json \
-  --from-file=license.key=./license.key \
   -n monitoring
 ```
 
@@ -549,8 +546,8 @@ jobs:
 
       - name: Download kshark
         run: |
-          wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
-          tar -xzf kshark-linux-amd64.tar.gz
+          wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
+          tar -xzf kshark_1.1.1_linux_amd64.tar.gz
           chmod +x kshark
 
       - name: Create configuration
@@ -591,8 +588,8 @@ kafka_diagnostic:
 
   before_script:
     - apk add --no-cache wget tar
-    - wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
-    - tar -xzf kshark-linux-amd64.tar.gz
+    - wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
+    - tar -xzf kshark_1.1.1_linux_amd64.tar.gz
     - chmod +x kshark
 
   script:
@@ -635,8 +632,8 @@ pipeline {
         stage('Download kshark') {
             steps {
                 sh '''
-                    wget https://github.com/scalytics/kshark-core/releases/latest/download/kshark-linux-amd64.tar.gz
-                    tar -xzf kshark-linux-amd64.tar.gz
+                    wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
+                    tar -xzf kshark_1.1.1_linux_amd64.tar.gz
                     chmod +x kshark
                 '''
             }
@@ -861,7 +858,7 @@ fi
 **Improvements:**
 ```dockerfile
 # Use specific version tags (not latest)
-FROM golang:1.23.2-alpine3.19 AS builder
+FROM golang:1.26.10-alpine AS builder
 
 # Use distroless for even smaller runtime
 FROM gcr.io/distroless/static:nonroot
@@ -1059,7 +1056,6 @@ builds:
    # Use .gitignore
    echo "*.properties" >> .gitignore
    echo "ai_config.json" >> .gitignore
-   echo "license.key" >> .gitignore
    ```
 
 2. **Use environment variables**
