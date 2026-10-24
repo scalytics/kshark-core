@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Produce and consume probe without `-group`: the consume step reads the partition the probe message was written to. It always read partition 0, so on an empty topic with several partitions it timed out whenever the message landed on another partition.
+
 ### Added
 - CI/CD pipeline with GitHub Actions (build, test, vet, govulncheck)
 - Weekly security scan workflow
