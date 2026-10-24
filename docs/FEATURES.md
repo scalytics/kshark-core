@@ -20,11 +20,10 @@ nav_order: 3
 5. [Configuration Options](#configuration-options)
 6. [Output Formats](#output-formats)
 7. [AI-Powered Analysis](#ai-powered-analysis)
-8. [Premium Features](#premium-features)
-9. [Command-Line Interface](#command-line-interface)
-10. [Configuration Presets](#configuration-presets)
-11. [Network Diagnostics](#network-diagnostics)
-12. [Use Cases](#use-cases)
+8. [Command-Line Interface](#command-line-interface)
+9. [Configuration Presets](#configuration-presets)
+10. [Network Diagnostics](#network-diagnostics)
+11. [Use Cases](#use-cases)
 
 ---
 
@@ -246,7 +245,7 @@ When a topic is specified, kshark performs a complete produce/consume cycle:
 
 ### SASL/PLAIN
 
-**Configuration (Option A — explicit credentials):**
+**Configuration (Option A: explicit credentials):**
 ```properties
 security.protocol=SASL_SSL
 sasl.mechanism=PLAIN
@@ -254,7 +253,7 @@ sasl.username=your-username
 sasl.password=your-password
 ```
 
-**Configuration (Option B — JAAS config only):**
+**Configuration (Option B: JAAS config only):**
 ```properties
 security.protocol=SASL_SSL
 sasl.mechanism=PLAIN
@@ -340,26 +339,7 @@ ssl.key.location=/path/to/client-key.pem
 
 ### SASL/GSSAPI (Kerberos)
 
-**Note:** Requires special build tag
-
-**Configuration:**
-```properties
-security.protocol=SASL_SSL
-sasl.mechanism=GSSAPI
-sasl.kerberos.service.name=kafka
-sasl.kerberos.principal=client@REALM.COM
-sasl.kerberos.keytab=/path/to/client.keytab
-```
-
-**Use Cases:**
-- Enterprise environments
-- Active Directory integration
-- Centralized authentication
-
-**Build Command:**
-```bash
-go build -tags kerberos -o kshark ./cmd/kshark
-```
+**Status:** not implemented. kshark detects `sasl.mechanism=GSSAPI` (or `KERBEROS`) and reads `sasl.kerberos.service.name`, `sasl.kerberos.principal` and `sasl.kerberos.realm`, but no Kerberos mechanism is wired in and there is no build tag for it. The Kafka connection is then made without SASL authentication.
 
 ---
 
@@ -447,6 +427,8 @@ Summary: 2 OK, 0 WARN, 0 FAIL, 0 SKIP
 
 ### 2. HTML Report
 
+The HTML report is written only after a successful `-analyze` run, and by the `validate-blueprint` subcommand. A plain scan does not write one.
+
 **Features:**
 - Responsive web design
 - Visual summaries per layer
@@ -474,7 +456,7 @@ open reports/analysis_report_broker.example.com_20250113_143022.html
 
 ---
 
-### 3. JSON Export (Premium)
+### 3. JSON Export
 
 **Features:**
 - Machine-readable format
@@ -629,64 +611,15 @@ Prevention:
 ```
 
 **Requirements:**
-1. Valid `license.key` file
-2. `ai_config.json` with provider configuration
-3. Network access to AI provider
-4. Valid API key with sufficient quota
+1. `ai_config.json` with provider configuration in the working directory
+2. Network access to AI provider
+3. Valid API key with sufficient quota
 
 **Cost Considerations:**
 - Each analysis is one API call
 - Typical token usage: 500-2000 tokens
 - Cost varies by provider and model
 - Consider caching for repeated diagnostics
-
----
-
-## Premium Features
-
-Premium features require a valid `license.key` file.
-
-### 1. AI-Powered Analysis
-
-**See:** [AI-Powered Analysis](#ai-powered-analysis) section
-
-**Benefit:** Intelligent root cause analysis
-
----
-
-### 2. JSON Export
-
-**Command:**
-```bash
-./kshark -props client.properties -json report.json
-```
-
-**Benefits:**
-- Machine-readable output
-- CI/CD integration
-- Automated processing
-- Historical trending
-
----
-
-### License Management
-
-**License File:** `license.key`
-
-**Format:** JSON
-```json
-{
-  "licensee": "Company Name",
-  "expiry": "2026-01-13",
-  "features": ["ai-analysis", "json-export"]
-}
-```
-
-**Validation:**
-- Checked at startup
-- Expiry date validation
-- Feature flag verification
-- File must be in current directory
 
 ---
 
@@ -842,100 +775,18 @@ This check is skipped on Windows where Unix file permissions do not apply.
 
 ## Configuration Presets
 
-Presets provide quick configuration templates for common Kafka distributions.
+`-preset` fills in `security.protocol` and `sasl.mechanism` when the properties file does not set them. Values in the file always win. Other preset names are ignored.
 
-### 1. Confluent Cloud
+| Preset | `security.protocol` | `sasl.mechanism` | Use for |
+|--------|---------------------|------------------|---------|
+| `cc-plain` | `SASL_SSL` | `PLAIN` | Confluent Cloud API key and secret |
+| `self-scram` | `SASL_SSL` | `SCRAM-SHA-512` | Self-managed clusters with SCRAM |
 
-**Preset:** `confluent-cloud`
+`bootstrap.servers`, `sasl.username` and `sasl.password` must still be in the properties file.
 
-**Pre-configured:**
-```properties
-security.protocol=SASL_SSL
-sasl.mechanism=PLAIN
-```
-
-**Required Overrides:**
-- `bootstrap.servers`
-- `sasl.username`
-- `sasl.password`
-
-**Usage:**
 ```bash
-./kshark --preset confluent-cloud \
-  -override bootstrap.servers=pkc-xxxxx.us-east-1.aws.confluent.cloud:9092 \
-  -override sasl.username=YOUR_API_KEY \
-  -override sasl.password=YOUR_API_SECRET
+./kshark -preset cc-plain -props client.properties
 ```
-
----
-
-### 2. Bitnami
-
-**Preset:** `bitnami`
-
-**Pre-configured:**
-```properties
-security.protocol=SASL_PLAINTEXT
-sasl.mechanism=SCRAM-SHA-256
-```
-
-**Required Overrides:**
-- `bootstrap.servers`
-- `sasl.username`
-- `sasl.password`
-
-**Usage:**
-```bash
-./kshark --preset bitnami \
-  -override bootstrap.servers=kafka.local:9092 \
-  -override sasl.username=user \
-  -override sasl.password=password
-```
-
----
-
-### 3. AWS MSK
-
-**Preset:** `aws-msk`
-
-**Pre-configured:**
-```properties
-security.protocol=SASL_SSL
-sasl.mechanism=AWS_MSK_IAM
-```
-
-**Required Overrides:**
-- `bootstrap.servers`
-
-**Usage:**
-```bash
-./kshark --preset aws-msk \
-  -override bootstrap.servers=b-1.msk-cluster.xxxxx.kafka.us-east-1.amazonaws.com:9098
-```
-
-**Note:** Requires AWS credentials in environment
-
----
-
-### 4. Plaintext
-
-**Preset:** `plaintext`
-
-**Pre-configured:**
-```properties
-security.protocol=PLAINTEXT
-```
-
-**Required Overrides:**
-- `bootstrap.servers`
-
-**Usage:**
-```bash
-./kshark --preset plaintext \
-  -override bootstrap.servers=localhost:9092
-```
-
-**Warning:** No encryption or authentication. Development only.
 
 ---
 
@@ -1094,7 +945,6 @@ MTU Check:
    ```bash
    chmod 600 client.properties
    chmod 600 ai_config.json
-   chmod 600 license.key
    ```
 
 ---
@@ -1142,11 +992,9 @@ MTU Check:
 
 ## Troubleshooting
 
-### Issue: "license.key required"
+### Issue: No HTML report
 
-**Solution:** AI analysis and JSON export are premium features. Either:
-1. Obtain a license.key file
-2. Use standard HTML/console output (free)
+**Solution:** The HTML report is only written after a successful `-analyze` run. Check that `ai_config.json` is in the working directory and has a valid API key.
 
 ---
 

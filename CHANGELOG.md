@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Startup banner reads `Edition: Open Source (Apache-2.0)` instead of `Edition: Open Source (non-commercial)`.
+- README, docs/FEATURES.md, docs/DEPLOYMENT.md and CONTRIBUTING.md match the code: Go 1.25, versioned release asset names, the real `ai_config.json` format, only the `cc-plain` and `self-scram` presets, GSSAPI marked as not implemented, no license file or premium tier, and HTML reports only after `-analyze`.
+
+### Removed
+- Stray example properties files, a tracked `reports/` directory, `my-report.json`, `docs/.DS_Store` and `test_docker.sh`
+
 ### Added
 - CI/CD pipeline with GitHub Actions (build, test, vet, govulncheck)
 - Weekly security scan workflow
@@ -50,6 +57,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Replaced MD5 checksums with SHA256
 - AI client `CheckRedirect` handler prevents redirect-based SSRF bypass
 - REST Proxy extracted to `checkRESTProxy()` for httptest-based testing
+
+## [1.1.1] - 2026-10-22
+
+### Added
+- `validate-blueprint` subcommand with routine and verdict output (#23)
+- Helm chart for a CronJob deployment (`deploy/helm/kshark`)
+- Homebrew tap configuration in GoReleaser
+
+### Changed
+- Release binaries are built with Go 1.26.10 for CVE-2026-111943 (#44)
+- Copyright holder is Scalytics, Inc. (#43)
+- Dependency updates: kafka-go 0.4.51, mongo-driver 2.9.2, pgx 5.10.0, golang.org/x/text
+- CI runs on Go 1.26 with golangci-lint v2
+
+### Security
+- Cleared critical CVEs in the shipped container image
+
+## [1.1.0] - 2026-03-27
+
+### Added
+- Redis and Elasticsearch connector probes
+- `-watch` mode, `kshark diff` and `kshark trend`
+- `kshark doctor` subcommand
+- Layered exit codes (1=DNS, 2=TCP, 3=TLS, 4=App, 5=Diag)
+
+### Changed
+- Scan orchestration moved from `main.go` to `scan.go`, broker discovery to `broker_discovery.go`
+
+### Fixed
+- Wire protocol probers read with bounded `io.Reader` handling
+- Added `releasepatch` and `releasemajor` Makefile targets
+
+## [1.0.3] - 2026-03-26
+
+### Added
+- MySQL, SQL Server and Oracle connector probes
+- Broker discovery scan with advertised listener mismatch detection
+- Neighborhood scan for connector targets
+
+## [1.0.2] - 2026-03-26
+
+### Removed
+- Tracked `.DS_Store` and `kshark` binary
+
+## [1.0.1] - 2026-03-26
+
+### Added
+- Probe direction control (`-probe-direction=up|full`)
+- Neighborhood scan with restriction classification
+- Diagnostics bundle with Terraform state redaction (`-bundle`, `-tf-state`, `-tf-plan`)
+
+## [1.0.0] - 2026-03-26
+
+### Changed
+- First 1.0 release with connector probes and SSRF protection
 
 ## [0.1.0] - 2025-09-05
 
