@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - Produce and consume probe without `-group`: the consume step reads the partition the probe message was written to. It always read partition 0, so on an empty topic with several partitions it timed out whenever the message landed on another partition.
+- `-bundle` works without a value, as the README documents. A bare `-bundle` at the end of the command failed with `flag needs an argument`, and `-bundle -tf-state=x` used `-tf-state=x` as the bundle file name and dropped the Terraform state. Use `-bundle` for the default name or `-bundle=path` for a custom path. `-bundle path` with a space no longer sets the path.
 
 ### Added
 - CI/CD pipeline with GitHub Actions (build, test, vet, govulncheck)
