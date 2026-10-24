@@ -52,12 +52,12 @@ func runValidateBlueprint(argv []string) {
 	logPath := fs.String("log", "", "Write detailed log to file")
 	logFormat := fs.String("log-format", "text", "Log output format: text|json")
 	if err := fs.Parse(argv); err != nil {
-		os.Exit(2)
+		exit(2)
 	}
 
 	if *routinePath == "" || *propsPath == "" {
 		fmt.Fprintln(os.Stderr, "Usage: kshark validate-blueprint --bp <id> --routine <file> -props <client.properties> [--digests <file>] [--backend <id>] [--out <bundle.json>] [--bundle <bvb.tar.gz>]")
-		os.Exit(2)
+		exit(2)
 	}
 
 	if *logPath == "" {
@@ -73,25 +73,25 @@ func runValidateBlueprint(argv []string) {
 	routine, err := loadRoutine(*routinePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading routine: %v\n", err)
-		os.Exit(1)
+		exit(1)
 	}
 
 	props, err := loadProperties(*propsPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load properties: %v\n", err)
-		os.Exit(1)
+		exit(1)
 	}
 	warnInsecurePermissions(*propsPath)
 	bootstrap := strings.TrimSpace(props["bootstrap.servers"])
 	if bootstrap == "" {
 		fmt.Fprintln(os.Stderr, "bootstrap.servers missing in properties")
-		os.Exit(1)
+		exit(1)
 	}
 
 	digests, err := loadImageDigests(*digestsPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading digests: %v\n", err)
-		os.Exit(1)
+		exit(1)
 	}
 
 	// Tier: --tier flag, else SMOKE_TIER env, else core.
@@ -161,7 +161,7 @@ func runValidateBlueprint(argv []string) {
 	if *outPath != "" {
 		if actual, err := writeJSON(*outPath, report); err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing BVB JSON: %v\n", err)
-			os.Exit(1)
+			exit(1)
 		} else {
 			fmt.Printf("BVB report written to %s\n", actual)
 			if csPath, cs, err := writeReportChecksum(actual); err == nil {
@@ -179,7 +179,7 @@ func runValidateBlueprint(argv []string) {
 	}
 
 	if bvb.Verdict.Status != VerdictGreen {
-		os.Exit(1)
+		exit(1)
 	}
 }
 
@@ -306,7 +306,7 @@ func runSchemaPresenceCheck(ctx context.Context, report *Report, rc runnerConfig
 // probeSubject does a GET <sr>/subjects/<subject>/versions and records the
 // result. It honors the same SSRF + TLS conventions as checkSchemaRegistry.
 func probeSubject(ctx context.Context, report *Report, props map[string]string, srURL, subject string) {
-	if _, err := isAllowedURL(srURL); err != nil {
+	if _, err := ssrfCheck(srURL); err != nil {
 		addRow(report, Row{"schema-reg", subject, HTTP, FAIL,
 			fmt.Sprintf("URL blocked (SSRF protection): %v", err), ""})
 		return
@@ -395,9 +395,10 @@ func runHTTPCheck(ctx context.Context, report *Report, check RoutineCheck) {
 	httpGet(ctx, report, check.ID, target, path, 200)
 }
 
-// ssrfCheck is the SSRF allowlist gate used by the generic HTTP probe. It is a
-// package var so tests can point it at a loopback httptest server; production
-// always uses isAllowedURL, which hard-blocks loopback/link-local/metadata.
+// ssrfCheck is the SSRF allowlist gate used by the HTTP probes and the AI
+// client. It is a package var so tests can point it at a loopback httptest
+// server; production always uses isAllowedURL, which hard-blocks
+// loopback/link-local/metadata.
 var ssrfCheck = isAllowedURL
 
 // httpGet is the shared generic HTTP probe used by component-health and

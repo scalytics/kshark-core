@@ -44,7 +44,7 @@ func runTrend(lastN int) {
 	entries, err := os.ReadDir(reportsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading reports directory: %v\n", err)
-		os.Exit(1)
+		exit(1)
 	}
 
 	var trends []trendEntry
