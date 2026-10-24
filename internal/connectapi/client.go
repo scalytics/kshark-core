@@ -95,10 +95,12 @@ func init() {
 	}
 }
 
+var lookupHost = net.LookupHost
+
 // isLinkLocalIP checks if a host resolves to any denied IP range
 // (loopback, link-local, cloud metadata, multicast, reserved).
 func isLinkLocalIP(host string) bool {
-	ips, err := net.LookupHost(host)
+	ips, err := lookupHost(host)
 	if err != nil {
 		return false
 	}
