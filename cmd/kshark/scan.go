@@ -76,7 +76,7 @@ func printScanPlan(props map[string]string, topics []string, diag bool, analyze 
 		fmt.Println("Target Topics: (none, metadata checks only)")
 	}
 
-	fmt.Printf("\nEdition: Open Source (non-commercial)\n")
+	fmt.Printf("\nEdition: Open Source (Apache-2.0)\n")
 	fmt.Printf("Version: %s\n", version)
 
 	fmt.Println("\nChecks to be performed:")
