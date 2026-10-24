@@ -155,7 +155,7 @@ func main() {
 	connectBearer := flag.String("connect-bearer-token", "", "Bearer token for Connect REST API auth (or set KSHARK_CONNECT_TOKEN env var)")
 	connectCACert := flag.String("connect-ca-cert", "", "CA cert PEM for Connect REST API TLS")
 	// Diagnostics bundle flags
-	bundle := flag.String("bundle", "", "Create diagnostics bundle (.tar.gz). Optional: specify output path.")
+	bundle := registerBundleFlag(flag.CommandLine)
 	tfState := flag.String("tf-state", "", "Path to Terraform state file to include in bundle (redacted)")
 	tfPlan := flag.String("tf-plan", "", "Path to Terraform plan output to include in bundle (redacted)")
 	watch := flag.Duration("watch", 0, "Re-run scan at this interval (e.g., 30s, 5m). 0 = single run.")
@@ -629,12 +629,8 @@ func main() {
 	}
 
 	// Create diagnostics bundle if requested
-	if *bundle != "" || *tfState != "" {
-		bundleOut := *bundle
-		if bundleOut == "" {
-			bundleOut = "" // createBundle will generate a default name
-		}
-		bundlePath, err := createBundle(report, *logPath, *jsonOut, *tfState, *tfPlan, bundleOut)
+	if bundle.enabled || *tfState != "" {
+		bundlePath, err := createBundle(report, *logPath, *jsonOut, *tfState, *tfPlan, bundle.path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating diagnostics bundle: %v\n", err)
 		} else {
