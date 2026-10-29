@@ -241,6 +241,15 @@ docker run --rm --user "$(id -u):$(id -g)" \
 
 The container runs as UID 65532 and writes reports to `/app/reports`. Mount a host directory there to keep them. `--user` lets the container write to a directory owned by your host user.
 
+For a diagnostics bundle on a read-only root filesystem, pass
+`-bundle=/app/reports/diagnostics.tar.gz`. A bare `-bundle` writes to the
+current working directory, which is `/app` in this image.
+
+To check image permissions and persistent report output without connecting to
+an external Kafka cluster, run `sh testbed/run-container-smoke.sh kshark:latest`
+after building the image. The check uses the default container user, a read-only
+root filesystem and a temporary Docker volume that it removes afterwards.
+
 ---
 
 ## Usage
