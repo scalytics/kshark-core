@@ -29,10 +29,11 @@ import (
 
 // ---------- DNS, TCP, TLS ----------
 
+var lookupHost = net.DefaultResolver.LookupHost
+
 func checkDNS(ctx context.Context, r *Report, host string, component string) {
 	start := time.Now()
-	resolver := net.DefaultResolver
-	_, err := resolver.LookupHost(ctx, host)
+	_, err := lookupHost(ctx, host)
 	slog.Debug("dns lookup", "host", host, "dur", time.Since(start).Truncate(time.Millisecond), "err", err)
 	if err != nil {
 		addRow(r, Row{component, host, L3, FAIL, fmt.Sprintf("DNS lookup failed: %v", err),

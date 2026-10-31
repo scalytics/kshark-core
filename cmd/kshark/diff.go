@@ -43,12 +43,12 @@ func runDiff(path1, path2 string) {
 	r1, err := loadReport(path1)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", path1, err)
-		os.Exit(1)
+		exit(1)
 	}
 	r2, err := loadReport(path2)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading %s: %v\n", path2, err)
-		os.Exit(1)
+		exit(1)
 	}
 
 	// Index rows from report1 by key
