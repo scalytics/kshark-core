@@ -227,16 +227,28 @@ go build -o kshark ./cmd/kshark
 
 ### Option 3: Docker
 
-```bash
-# Pull the image (when published)
-docker pull ghcr.io/scalytics/kshark-core:latest
+No container image is published. Build it locally:
 
-# Or build locally
+```bash
 docker build -t kshark:latest .
 
-# Run with mounted configuration
-docker run -v $(pwd):/config kshark:latest -props /config/client.properties
+mkdir -p reports
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/client.properties:/config/client.properties:ro" \
+  -v "$PWD/reports:/app/reports" \
+  kshark:latest -props /config/client.properties -y
 ```
+
+The container runs as UID 65532 and writes reports to `/app/reports`. Mount a host directory there to keep them. `--user` lets the container write to a directory owned by your host user.
+
+For a diagnostics bundle on a read-only root filesystem, pass
+`-bundle=/app/reports/diagnostics.tar.gz`. A bare `-bundle` writes to the
+current working directory, which is `/app` in this image.
+
+To check image permissions and persistent report output without connecting to
+an external Kafka cluster, run `sh testbed/run-container-smoke.sh kshark:latest`
+after building the image. The check uses the default container user, a read-only
+root filesystem and a temporary Docker volume that it removes afterwards.
 
 ---
 
@@ -769,13 +781,14 @@ Summary: 9 OK, 1 WARN, 0 FAIL
 docker build -t kshark:latest .
 
 # Run diagnostic
-docker run --rm \
-  -v $(pwd)/client.properties:/config/client.properties:ro \
-  -v $(pwd)/reports:/reports \
-  kshark:latest -props /config/client.properties -topic test -y
+mkdir -p reports
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/client.properties:/config/client.properties:ro" \
+  -v "$PWD/reports:/app/reports" \
+  kshark:latest -props /config/client.properties -topic test -y -json test.json
 
-# Check the report
-open reports/analysis_report_*.html
+# Check the JSON report and log
+ls reports/
 ```
 
 ### Kubernetes CronJob Example
