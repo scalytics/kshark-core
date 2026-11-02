@@ -12,7 +12,9 @@ permissions:
 jobs:
   build:
     name: Build & Test
-    runs-on: ubuntu-latest
+    # MongoDB 8.0 cannot start on the newer hosted-runner kernel (SERVER-121912).
+    # Keep the integration suite on Ubuntu 22.04 until MongoDB supports it.
+    runs-on: ubuntu-22.04
     env:
       GOTOOLCHAIN: go1.26.10
     steps:
