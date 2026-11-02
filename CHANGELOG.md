@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- Neighborhood scan: when every probed port answers "connection refused", the result is `service_not_listening`, as documented. It was `host_unreachable` when ICMP failed and `all_tcp_blocked` when ICMP worked, even though a refused connection proves the host is reachable. A mix of refused and timed-out ports with no open port is now `mixed_filtering` instead of `host_unreachable` or `all_tcp_blocked`.
+- Produce and consume probe without `-group`: the consume step reads the partition the probe message was written to. It always read partition 0, so on an empty topic with several partitions it timed out whenever the message landed on another partition.
+- `-bundle` works without a value, as the README documents. A bare `-bundle` at the end of the command failed with `flag needs an argument`, and `-bundle -tf-state=x` used `-tf-state=x` as the bundle file name and dropped the Terraform state. Use `-bundle` for the default name or `-bundle=path` for a custom path. `-bundle path` with a space no longer sets the path.
 - Docker image: `/app/reports` exists and is owned by `appuser`, so reports can be written in the container. `appuser` now has UID and GID 65532, which matches the Helm chart's security context.
 - Helm chart: the reports volume is mounted at `/app/reports`, where kshark writes. It was mounted at `/reports`, so with a read-only root filesystem the reports never reached the PVC. The default image is now `kshark:1.1.1` instead of a private registry address, and the planning notes and the example with nonexistent flags were removed from `values.yaml`. Chart version 0.1.2, appVersion 1.1.1.
 

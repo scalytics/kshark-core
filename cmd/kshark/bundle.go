@@ -19,6 +19,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -177,6 +178,38 @@ func printExportCommands(bundlePath string) {
 		fmt.Printf("  kubectl cp <namespace>/<pod>:%s ./%s\n\n", absPath, basename)
 	}
 }
+
+type bundleFlag struct {
+	enabled bool
+	path    string
+}
+
+func registerBundleFlag(fs *flag.FlagSet) *bundleFlag {
+	b := &bundleFlag{}
+	fs.Var(b, "bundle", "Create diagnostics bundle (.tar.gz). Use -bundle for a default name or -bundle=path for a custom path.")
+	return b
+}
+
+func (b *bundleFlag) String() string {
+	if b == nil {
+		return ""
+	}
+	return b.path
+}
+
+func (b *bundleFlag) Set(v string) error {
+	switch v {
+	case "true":
+		b.enabled, b.path = true, ""
+	case "false":
+		b.enabled, b.path = false, ""
+	default:
+		b.enabled, b.path = true, v
+	}
+	return nil
+}
+
+func (b *bundleFlag) IsBoolFlag() bool { return true }
 
 // createBundle packages all diagnostic artifacts into a .tar.gz archive.
 func createBundle(report *Report, logPath, jsonReportPath, tfStatePath, tfPlanPath, bundleOutput string) (string, error) {
