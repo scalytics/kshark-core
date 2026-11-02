@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -14,14 +13,26 @@ jobs:
   build:
     name: Build & Test
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: go1.26.10
     steps:
+      # The organization permits local actions only. Keep PR checks executable
+      # without external actions, and never schedule paid macOS runners.
       - name: Checkout
-        uses: actions/checkout@v7
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${REPOSITORY}.git"
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$AUTH"
+          git -c "http.extraheader=AUTHORIZATION: basic $AUTH" fetch --depth=1 origin "$REF"
+          git checkout --detach FETCH_HEAD
 
       - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.26.10'
+        run: go version
 
       - name: Download dependencies
         run: go mod download
@@ -30,11 +41,15 @@ jobs:
         run: go vet ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          # Pinned: `latest` drifts and newer gosec rules (G703/G704) fail CI on
-          # patterns kshark guards at runtime. Bump deliberately + re-validate.
-          version: v2.9.0
+        run: |
+          VERSION=2.9.0
+          ASSET="golangci-lint-${VERSION}-linux-amd64.tar.gz"
+          BASE="https://github.com/golangci/golangci-lint/releases/download/v${VERSION}"
+          curl --fail --silent --show-error --location "$BASE/$ASSET" -o "$RUNNER_TEMP/$ASSET"
+          curl --fail --silent --show-error --location "$BASE/golangci-lint-${VERSION}-checksums.txt" -o "$RUNNER_TEMP/lint-checksums.txt"
+          (cd "$RUNNER_TEMP" && grep "  $ASSET$" lint-checksums.txt | sha256sum --check --strict)
+          tar -xzf "$RUNNER_TEMP/$ASSET" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/golangci-lint-${VERSION}-linux-amd64/golangci-lint" run ./...
 
       - name: Build
         run: CGO_ENABLED=0 go build -o kshark ./cmd/kshark
@@ -58,40 +73,4 @@ jobs:
       - name: Vulnerability check
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
-
-  release:
-    name: Release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-      id-token: write  # Required for keyless cosign signing via GitHub OIDC
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.26.10'
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
-
-      - name: Install syft (SBOM generator)
-        uses: anchore/sbom-action/download-syft@v0
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          "$(go env GOPATH)/bin/govulncheck" ./...
