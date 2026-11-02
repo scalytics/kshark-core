@@ -43,7 +43,7 @@ func startContainer(t *testing.T, image string, containerPort int, env map[strin
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
-	args := []string{"run", "-d", "--rm", "-p", fmt.Sprintf("127.0.0.1:%d:%d", port, containerPort)}
+	args := []string{"run", "-d", "-p", fmt.Sprintf("127.0.0.1:%d:%d", port, containerPort)}
 	for k, v := range env {
 		args = append(args, "-e", k+"="+v)
 	}
@@ -54,7 +54,15 @@ func startContainer(t *testing.T, image string, containerPort int, env map[strin
 		t.Fatalf("docker run %s: %v: %s", image, err, out)
 	}
 	id := strings.TrimSpace(string(out))
-	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", id).Run() })
+	t.Cleanup(func() {
+		if t.Failed() {
+			for _, args := range [][]string{{"inspect", "--format", "{{json .State}}", id}, {"logs", "--tail", "100", id}} {
+				out, _ := exec.Command("docker", args...).CombinedOutput()
+				t.Logf("docker %s: %s", strings.Join(args, " "), out)
+			}
+		}
+		_ = exec.Command("docker", "rm", "-f", id).Run()
+	})
 	return port
 }
 
