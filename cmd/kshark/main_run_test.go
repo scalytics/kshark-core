@@ -187,7 +187,7 @@ func TestMain_ScanDeadBroker_ExitCodeAndArtifacts(t *testing.T) {
 	res := runMain(t, "y\n",
 		"-props", props, "-diag=false", "-kafka-timeout", "2s", "-start-offset", "middle",
 		"-json", "reports/out.json", "-log", "logs/scan.log", "-log-format", "json",
-		"-bundle", "bundle.tar.gz", "-tf-state", "missing.tfstate")
+		"-bundle=bundle.tar.gz", "-tf-state", "missing.tfstate")
 	if !res.exited || res.code != 2 {
 		t.Fatalf("exit = %v/%d, want L4 exit code 2\nstdout: %s\nstderr: %s", res.exited, res.code, res.stdout, res.stderr)
 	}

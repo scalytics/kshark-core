@@ -265,7 +265,7 @@ func TestKafka_MainFullScanGreen(t *testing.T) {
 	t.Chdir(dir)
 	props := writeTestFile(t, filepath.Join(dir, "client.properties"), "bootstrap.servers="+tk.plain+"\nsecurity.protocol=PLAINTEXT\n")
 	res := runMain(t, "", "-props", props, "-topic", testKafkaTopic, "-y", "-diag=false", "-balancer", "rr",
-		"-produce-timeout", "10s", "-consume-timeout", "15s", "-json", "reports/green.json", "-bundle", "green.tar.gz")
+		"-produce-timeout", "10s", "-consume-timeout", "15s", "-json", "reports/green.json", "-bundle=green.tar.gz")
 	if res.exited {
 		t.Fatalf("exit = %d, want clean return\nstdout: %s\nstderr: %s", res.code, res.stdout, res.stderr)
 	}
