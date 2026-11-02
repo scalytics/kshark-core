@@ -18,6 +18,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -351,5 +352,37 @@ func TestDetectEnvironment_Default(t *testing.T) {
 	// On a standard dev machine, should be "vm" or "unknown"
 	if env != "vm" && env != "unknown" && env != "docker" && env != "kubernetes" {
 		t.Errorf("unexpected environment: %s", env)
+	}
+}
+
+func TestBundleFlag_Parsing(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantEnabled bool
+		wantPath    string
+		wantTFState string
+	}{
+		{"not set", []string{"-tf-state=x.tfstate"}, false, "", "x.tfstate"},
+		{"bare at end", []string{"-bundle"}, true, "", ""},
+		{"bare before another flag", []string{"-bundle", "-tf-state=x.tfstate"}, true, "", "x.tfstate"},
+		{"custom path", []string{"-bundle=/tmp/diag.tar.gz"}, true, "/tmp/diag.tar.gz", ""},
+		{"explicit false", []string{"-bundle=false"}, false, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("kshark", flag.ContinueOnError)
+			b := registerBundleFlag(fs)
+			tf := fs.String("tf-state", "", "")
+			if err := fs.Parse(tt.args); err != nil {
+				t.Fatalf("parse %v: %v", tt.args, err)
+			}
+			if b.enabled != tt.wantEnabled || b.path != tt.wantPath {
+				t.Errorf("bundle = {%v %q}, want {%v %q}", b.enabled, b.path, tt.wantEnabled, tt.wantPath)
+			}
+			if *tf != tt.wantTFState {
+				t.Errorf("tf-state = %q, want %q", *tf, tt.wantTFState)
+			}
+		})
 	}
 }
