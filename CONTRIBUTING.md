@@ -4,7 +4,7 @@ We welcome contributions! This guide explains how to get started.
 
 ## Prerequisites
 
-- **Go 1.23+** ([golang.org/dl](https://go.dev/dl/))
+- **Go 1.25+** ([golang.org/dl](https://go.dev/dl/))
 - **Docker** (for integration testbed)
 - **golangci-lint** (optional, for local linting)
 
