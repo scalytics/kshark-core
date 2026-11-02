@@ -113,7 +113,7 @@ func brokerDiscoveryScan(r *Report, props map[string]string, bootstrapAddrs []st
 				continue
 			}
 
-			addrs, dnsErr := net.LookupHost(host)
+			addrs, dnsErr := lookupHost(context.Background(), host)
 			if dnsErr != nil {
 				addRow(r, Row{
 					"neighborhood", brokerAddr, L3, FAIL,

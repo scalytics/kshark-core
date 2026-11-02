@@ -105,7 +105,7 @@ func main() {
 		case "diff":
 			if len(os.Args) < 4 {
 				fmt.Fprintln(os.Stderr, "Usage: kshark diff <report1.json> <report2.json>")
-				os.Exit(2)
+				exit(2)
 			}
 			runDiff(os.Args[2], os.Args[3])
 			return
@@ -182,7 +182,7 @@ func main() {
 		// valid
 	default:
 		fmt.Fprintf(os.Stderr, "Invalid -probe-direction value %q: must be 'up' or 'full'\n", *probeDirection)
-		os.Exit(2)
+		exit(2)
 	}
 
 	if *showVersion {
@@ -192,7 +192,7 @@ func main() {
 
 	if *propsPath == "" && *connectURL == "" && *connectorConfig == "" {
 		fmt.Fprintln(os.Stderr, "Usage: kshark -props client.properties [...] OR kshark -connect-url URL -connector-name NAME [...] OR kshark -connector-config FILE [...]")
-		os.Exit(2)
+		exit(2)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
@@ -230,7 +230,7 @@ func main() {
 		props, err = loadProperties(*propsPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load properties: %v\n", err)
-			os.Exit(1)
+			exit(1)
 		}
 		warnInsecurePermissions(*propsPath)
 		if *preset != "" {
@@ -245,7 +245,7 @@ func main() {
 	bootstrap := props["bootstrap.servers"]
 	if bootstrap == "" && *connectURL == "" && *connectorConfig == "" {
 		fmt.Fprintln(os.Stderr, "bootstrap.servers missing")
-		os.Exit(1)
+		exit(1)
 	}
 	if bootstrap != "" {
 		slog.Debug("bootstrap servers", "servers", bootstrap)
@@ -328,7 +328,7 @@ func main() {
 			}
 			if input == "n" || input == "no" {
 				fmt.Println("Scan aborted by user.")
-				os.Exit(0)
+				exit(0)
 			}
 		}
 	}
@@ -429,7 +429,7 @@ func main() {
 			case <-watchCtx.Done():
 				fmt.Printf("\nWatch mode stopped after iteration %d.\n", iteration)
 				if iterReport.HasFailed {
-					os.Exit(layeredExitCode(iterReport))
+					exit(layeredExitCode(iterReport))
 				}
 				return
 			default:
@@ -446,7 +446,7 @@ func main() {
 				case <-watchCtx.Done():
 					fmt.Printf("\nWatch mode stopped after iteration %d.\n", iteration)
 					if iterReport.HasFailed {
-						os.Exit(layeredExitCode(iterReport))
+						exit(layeredExitCode(iterReport))
 					}
 					return
 				}
@@ -616,7 +616,7 @@ func main() {
 		actualPath, err := writeJSON(*jsonOut, report)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing JSON report: %v\n", err)
-			os.Exit(1)
+			exit(1)
 		}
 		absPath, _ := filepath.Abs(actualPath)
 		fmt.Printf("JSON report written to %s\n", absPath)
@@ -639,7 +639,7 @@ func main() {
 	}
 
 	if report.HasFailed {
-		os.Exit(layeredExitCode(report))
+		exit(layeredExitCode(report))
 	}
 }
 

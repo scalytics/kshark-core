@@ -27,6 +27,8 @@ import (
 
 // ---------- Utilities ----------
 
+var exit = os.Exit
+
 // initScanLog sets up structured logging to a file.
 // If logFormat is "json", uses JSON handler; otherwise text.
 func initScanLog(path string, logFormat string) (*os.File, error) {

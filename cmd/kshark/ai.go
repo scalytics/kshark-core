@@ -210,7 +210,7 @@ func writeAnalysisPromptMD(systemPrompt, userPrompt, reportDir string) (string, 
 
 func (c *AIClient) AnalyzeReport(ctx context.Context, systemPrompt, userPrompt string) (*AIAnalysisResponse, error) {
 	// SSRF protection: validate AI endpoint URL before sending report data
-	if _, err := isAllowedURL(c.config.APIEndpoint); err != nil {
+	if _, err := ssrfCheck(c.config.APIEndpoint); err != nil {
 		return nil, fmt.Errorf("AI endpoint blocked (SSRF protection): %w", err)
 	}
 

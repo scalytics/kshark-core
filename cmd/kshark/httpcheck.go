@@ -48,7 +48,7 @@ func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string) {
 	}
 
 	// SSRF validation
-	if warning, err := isAllowedURL(url); err != nil {
+	if warning, err := ssrfCheck(url); err != nil {
 		addRow(r, Row{"schema-reg", url, HTTP, FAIL,
 			fmt.Sprintf("URL blocked (SSRF protection): %v", err),
 			"URL must not point to loopback, link-local, or cloud metadata. RFC1918 is allowed for PrivateLink."})
@@ -58,7 +58,7 @@ func checkSchemaRegistry(ctx context.Context, r *Report, p map[string]string) {
 	}
 	host := extractHost(url)
 	dnsStart := time.Now()
-	if _, err := net.LookupHost(host); err != nil {
+	if _, err := lookupHost(context.Background(), host); err != nil {
 		slog.Debug("schema registry dns", "host", host, "dur", time.Since(dnsStart).Truncate(time.Millisecond), "err", err)
 		addRow(r, Row{"schema-reg", host, L3, FAIL, "DNS failed", "Fix DNS/VPN."})
 	} else {

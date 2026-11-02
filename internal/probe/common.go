@@ -10,10 +10,12 @@ import (
 	"time"
 )
 
+var lookupHost = net.LookupHost
+
 // ProbeDNS resolves the hostname and returns a ProbeStep.
 func ProbeDNS(host string) ProbeStep {
 	start := time.Now()
-	addrs, err := net.LookupHost(host)
+	addrs, err := lookupHost(host)
 	elapsed := time.Since(start)
 
 	if err != nil {

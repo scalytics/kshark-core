@@ -315,7 +315,7 @@ func checkRESTProxy(ctx context.Context, report *Report, props map[string]string
 
 	slog.Debug("rest proxy check start", "url", rest)
 
-	if warning, ssrfErr := isAllowedURL(rest); ssrfErr != nil {
+	if warning, ssrfErr := ssrfCheck(rest); ssrfErr != nil {
 		addRow(report, Row{"rest-proxy", rest, DIAG, FAIL, fmt.Sprintf("SSRF check: %v", ssrfErr), "Use a valid, non-loopback URL."})
 		return
 	} else if warning != "" {

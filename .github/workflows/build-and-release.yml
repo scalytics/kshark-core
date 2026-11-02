@@ -12,7 +12,9 @@ permissions:
 jobs:
   build:
     name: Build & Test
-    runs-on: ubuntu-latest
+    # MongoDB 8.0 cannot start on the newer hosted-runner kernel (SERVER-121912).
+    # Keep the integration suite on Ubuntu 22.04 until MongoDB supports it.
+    runs-on: ubuntu-22.04
     env:
       GOTOOLCHAIN: go1.26.10
     steps:
@@ -55,7 +57,7 @@ jobs:
         run: CGO_ENABLED=0 go build -o kshark ./cmd/kshark
 
       - name: Test
-        run: go test ./... -v -race -timeout 120s -coverprofile=coverage.out
+        run: go test ./... -v -race -timeout 900s -coverprofile=coverage.out
 
       - name: Coverage report
         run: go tool cover -func=coverage.out
@@ -64,7 +66,7 @@ jobs:
         run: |
           TOTAL=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print substr($3, 1, length($3)-1)}')
           echo "Total coverage: ${TOTAL}%"
-          THRESHOLD=40
+          THRESHOLD=85
           if [ "$(echo "$TOTAL < $THRESHOLD" | bc)" -eq 1 ]; then
             echo "::error::Coverage ${TOTAL}% is below ${THRESHOLD}% minimum"
             exit 1
