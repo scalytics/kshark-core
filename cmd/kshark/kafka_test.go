@@ -459,3 +459,23 @@ func TestLoggingBalancer_Balance_WithLeaders(t *testing.T) {
 		t.Errorf("Balance() returned %d, not in %v", p, partitions)
 	}
 }
+
+func TestProbeConsumeReadsProducedPartition(t *testing.T) {
+	b := &loggingBalancer{
+		base: kafka.BalancerFunc(func(_ kafka.Message, partitions ...int) int {
+			return partitions[len(partitions)-1]
+		}),
+		topic: "orders",
+	}
+	got := b.Balance(kafka.Message{}, 0, 1, 2)
+	if got != 2 {
+		t.Fatalf("Balance returned %d, want 2", got)
+	}
+	cfg := partitionReaderConfig("b1:9092,b2:9092", "orders", b.partition, nil)
+	if cfg.Partition != 2 {
+		t.Errorf("reader partition = %d, want 2", cfg.Partition)
+	}
+	if cfg.Topic != "orders" || len(cfg.Brokers) != 2 {
+		t.Errorf("unexpected reader config: topic=%q brokers=%v", cfg.Topic, cfg.Brokers)
+	}
+}
