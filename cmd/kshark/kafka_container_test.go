@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -115,9 +116,12 @@ func startKafka() (*testKafka, error) {
 		args = append(args, "-e", k+"="+v)
 	}
 	args = append(args, testKafkaImage)
-	out, err := exec.Command("docker", args...).CombinedOutput()
+	var stderr bytes.Buffer
+	command := exec.Command("docker", args...)
+	command.Stderr = &stderr
+	out, err := command.Output()
 	if err != nil {
-		return nil, fmt.Errorf("docker run: %v: %s", err, out)
+		return nil, fmt.Errorf("docker run: %v: %s", err, stderr.String())
 	}
 	kafkaContainer = strings.TrimSpace(string(out))
 
