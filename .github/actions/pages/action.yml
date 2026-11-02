@@ -1,0 +1,18 @@
+name: Local Pages artifact and deployment
+description: Upload and deploy Pages with the official GitHub toolkit under the local-actions policy.
+inputs:
+  mode:
+    description: upload or deploy
+    required: true
+  artifact-id:
+    description: Artifact ID returned by upload
+  token:
+    description: GitHub token with pages write permission
+outputs:
+  artifact-id:
+    description: Uploaded artifact ID
+  page_url:
+    description: Published Pages URL
+runs:
+  using: node24
+  main: index.mjs
