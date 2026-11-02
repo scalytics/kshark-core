@@ -128,10 +128,11 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 		addRow(r, Row{"kafka", topic, L7, FAIL, fmt.Sprintf("transport: %v", err), "Check tls/sasl settings."})
 		return
 	}
+	lb := &loggingBalancer{base: baseBalancer, topic: topic, leaders: leaders}
 	w := &kafka.Writer{
 		Addr:         kafka.TCP(strings.Split(bootstrap, ",")...),
 		Topic:        topic,
-		Balancer:     &loggingBalancer{base: baseBalancer, topic: topic, leaders: leaders},
+		Balancer:     lb,
 		RequiredAcks: kafka.RequireOne,
 		Async:        false,
 		Transport:    transport,
@@ -187,7 +188,7 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 	// Use direct partition read (no consumer group) for the consume probe.
 	// Consumer group coordination (JoinGroup/SyncGroup/Heartbeat) adds seconds
 	// of overhead on Confluent Cloud and is unnecessary for a connectivity check.
-	// If a group is explicitly requested, honour it; otherwise probe partition 0.
+	// If a group is explicitly requested, honour it; otherwise read the partition the probe message was written to.
 	if group != "" {
 		reader := kafka.NewReader(kafka.ReaderConfig{
 			Brokers:     strings.Split(bootstrap, ","),
@@ -214,13 +215,7 @@ func probeProduceConsume(ctx context.Context, r *Report, p map[string]string, bo
 	}
 
 	// Direct partition fetch — fast, no group coordination needed.
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:   strings.Split(bootstrap, ","),
-		Topic:     topic,
-		Partition: 0,
-		MaxWait:   3 * time.Second,
-		Dialer:    dialer,
-	})
+	reader := kafka.NewReader(partitionReaderConfig(bootstrap, topic, lb.partition, dialer))
 	defer reader.Close()
 	if err := reader.SetOffset(kafka.FirstOffset); err != nil {
 		slog.Debug("kafka consume seek failed", "topic", topic, "err", err)
@@ -355,9 +350,20 @@ func kafkaErrorCode(err error) (kafka.Error, bool) {
 }
 
 type loggingBalancer struct {
-	base    kafka.Balancer
-	topic   string
-	leaders map[int]kafka.Broker
+	base      kafka.Balancer
+	topic     string
+	leaders   map[int]kafka.Broker
+	partition int
+}
+
+func partitionReaderConfig(bootstrap, topic string, partition int, dialer *kafka.Dialer) kafka.ReaderConfig {
+	return kafka.ReaderConfig{
+		Brokers:   strings.Split(bootstrap, ","),
+		Topic:     topic,
+		Partition: partition,
+		MaxWait:   3 * time.Second,
+		Dialer:    dialer,
+	}
 }
 
 func (b *loggingBalancer) Balance(msg kafka.Message, partitions ...int) int {
@@ -365,6 +371,7 @@ func (b *loggingBalancer) Balance(msg kafka.Message, partitions ...int) int {
 		b.base = &kafka.LeastBytes{}
 	}
 	partition := b.base.Balance(msg, partitions...)
+	b.partition = partition
 	if len(b.leaders) > 0 {
 		if leader, ok := b.leaders[partition]; ok {
 			slog.Debug("kafka balance", "topic", b.topic, "partition", partition, "leader_host", leader.Host, "leader_port", leader.Port, "broker_id", leader.ID)
