@@ -150,6 +150,30 @@ func TestClassifyRestriction_ServiceNotListening(t *testing.T) {
 	}
 }
 
+func TestClassifyRestriction_AllRefusedIsServiceNotListening(t *testing.T) {
+	results := []PortProbeResult{
+		{Port: 443, Status: FAIL, Detail: "refused"},
+		{Port: 9092, Status: FAIL, Detail: "refused"},
+	}
+	for _, icmpOK := range []bool{false, true} {
+		d := classifyRestriction(results, icmpOK)
+		if d.Classification != "service_not_listening" {
+			t.Errorf("icmpOK=%v: expected service_not_listening, got %s", icmpOK, d.Classification)
+		}
+	}
+}
+
+func TestClassifyRestriction_RefusedAndBlockedWithoutICMPIsNotHostUnreachable(t *testing.T) {
+	results := []PortProbeResult{
+		{Port: 443, Status: FAIL, Detail: "timeout"},
+		{Port: 9092, Status: FAIL, Detail: "refused"},
+	}
+	d := classifyRestriction(results, false)
+	if d.Classification != "mixed_filtering" {
+		t.Errorf("expected mixed_filtering, got %s", d.Classification)
+	}
+}
+
 func TestConnectorNeighborhoodPorts(t *testing.T) {
 	tests := []struct {
 		connType string
