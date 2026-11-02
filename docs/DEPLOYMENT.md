@@ -56,20 +56,20 @@ This guide covers deployment strategies for kshark across different environments
 **Download:**
 ```bash
 # Linux (amd64)
-wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
-tar -xzf kshark_1.1.1_linux_amd64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_linux_amd64.tar.gz
+tar -xzf kshark_1.1.2_linux_amd64.tar.gz
 sudo mv kshark /usr/local/bin/
 chmod +x /usr/local/bin/kshark
 
 # macOS (arm64)
-wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_darwin_arm64.tar.gz
-tar -xzf kshark_1.1.1_darwin_arm64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_darwin_arm64.tar.gz
+tar -xzf kshark_1.1.2_darwin_arm64.tar.gz
 sudo mv kshark /usr/local/bin/
 chmod +x /usr/local/bin/kshark
 
 # Windows (amd64)
-wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_windows_amd64.zip
-unzip kshark_1.1.1_windows_amd64.zip
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_windows_amd64.zip
+unzip kshark_1.1.2_windows_amd64.zip
 # Add to PATH or move to C:\Windows\System32\
 ```
 
@@ -546,8 +546,8 @@ jobs:
 
       - name: Download kshark
         run: |
-          wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
-          tar -xzf kshark_1.1.1_linux_amd64.tar.gz
+          wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_linux_amd64.tar.gz
+          tar -xzf kshark_1.1.2_linux_amd64.tar.gz
           chmod +x kshark
 
       - name: Create configuration
@@ -588,8 +588,8 @@ kafka_diagnostic:
 
   before_script:
     - apk add --no-cache wget tar
-    - wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
-    - tar -xzf kshark_1.1.1_linux_amd64.tar.gz
+    - wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_linux_amd64.tar.gz
+    - tar -xzf kshark_1.1.2_linux_amd64.tar.gz
     - chmod +x kshark
 
   script:
@@ -632,8 +632,8 @@ pipeline {
         stage('Download kshark') {
             steps {
                 sh '''
-                    wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
-                    tar -xzf kshark_1.1.1_linux_amd64.tar.gz
+                    wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_linux_amd64.tar.gz
+                    tar -xzf kshark_1.1.2_linux_amd64.tar.gz
                     chmod +x kshark
                 '''
             }

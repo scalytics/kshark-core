@@ -186,29 +186,29 @@ EOF
 
 ### Option 1: Download Pre-built Binary (Recommended)
 
-Download a release for your platform from the [Releases page](https://github.com/scalytics/kshark-core/releases). Archives are named `kshark_<version>_<os>_<arch>`, for linux, darwin and windows on amd64 and arm64. The examples use v1.1.1:
+Download a release for your platform from the [Releases page](https://github.com/scalytics/kshark-core/releases). Archives are named `kshark_<version>_<os>_<arch>`, for linux, darwin and windows on amd64 and arm64. The examples use v1.1.2:
 
 ```bash
 # Linux (amd64)
-wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_linux_amd64.tar.gz
-tar -xzf kshark_1.1.1_linux_amd64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_linux_amd64.tar.gz
+tar -xzf kshark_1.1.2_linux_amd64.tar.gz
 
 # macOS (arm64, Apple Silicon)
-wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_darwin_arm64.tar.gz
-tar -xzf kshark_1.1.1_darwin_arm64.tar.gz
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_darwin_arm64.tar.gz
+tar -xzf kshark_1.1.2_darwin_arm64.tar.gz
 
 # Windows (amd64)
-wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/kshark_1.1.1_windows_amd64.zip
-unzip kshark_1.1.1_windows_amd64.zip
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/kshark_1.1.2_windows_amd64.zip
+unzip kshark_1.1.2_windows_amd64.zip
 ```
 
 Verify the checksum of the archive you downloaded:
 ```bash
-wget https://github.com/scalytics/kshark-core/releases/download/v1.1.1/checksums.txt
+wget https://github.com/scalytics/kshark-core/releases/download/v1.1.2/checksums.txt
 sha256sum -c --ignore-missing checksums.txt
 ```
 
-`checksums.txt` is signed with cosign (keyless). The signature is published as `checksums.txt.sig`.
+`checksums.txt` is signed with cosign (keyless). The signature and certificate are published in `checksums.txt.sigstore.json`.
 
 ### Option 2: Build from Source
 

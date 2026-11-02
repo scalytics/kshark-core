@@ -7,38 +7,76 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    env:
+      GOTOOLCHAIN: go1.26.10
     permissions:
       contents: write
-      packages: write
-      id-token: write  # Required for keyless cosign signing via GitHub OIDC
+      id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
+      # The organization permits local actions only.
+      - name: Checkout release history
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.ref }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${REPOSITORY}.git"
+          AUTH=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          echo "::add-mask::$AUTH"
+          git -c "http.extraheader=AUTHORIZATION: basic $AUTH" fetch origin \
+            '+refs/heads/*:refs/remotes/origin/*' '+refs/tags/*:refs/tags/*'
+          git checkout --detach "$REF"
+
+      - name: Verify purged paths stay absent
+        run: |
+          if [ -n "$(git log --all --format=%H -- client-wrong-1.properties client-wrong-2.properties t2.client.properties)" ]; then
+            echo "::error::Release history contains previously leaked properties files"
+            exit 1
+          fi
 
       - name: Set up Go
-        uses: actions/setup-go@v7
-        with:
-          go-version: '1.26.10'
+        run: go version
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+      - name: Install pinned release tools
+        run: |
+          set -euo pipefail
+          TOOLS="$RUNNER_TEMP/release-tools"
+          mkdir -p "$TOOLS/bin"
+          install_archive() {
+            local repo="$1" version="$2" asset="$3" checksums="$4" binary="$5"
+            local directory="$TOOLS/$binary"
+            mkdir -p "$directory"
+            local base="https://github.com/$repo/releases/download/v$version"
+            curl --fail --silent --show-error --location "$base/$asset" -o "$directory/$asset"
+            curl --fail --silent --show-error --location "$base/$checksums" -o "$directory/checksums.txt"
+            (cd "$directory" && grep "  $asset$" checksums.txt | sha256sum --check --strict)
+            tar -xzf "$directory/$asset" -C "$directory" "$binary"
+            install -m 0755 "$directory/$binary" "$TOOLS/bin/$binary"
+          }
+          install_archive goreleaser/goreleaser 2.18.3 goreleaser_Linux_x86_64.tar.gz checksums.txt goreleaser
+          install_archive anchore/syft 1.55.0 syft_1.55.0_linux_amd64.tar.gz syft_1.55.0_checksums.txt syft
+          COSIGN_BASE="https://github.com/sigstore/cosign/releases/download/v3.1.4"
+          curl --fail --silent --show-error --location "$COSIGN_BASE/cosign-linux-amd64" -o "$TOOLS/cosign-linux-amd64"
+          curl --fail --silent --show-error --location "$COSIGN_BASE/cosign_checksums.txt" -o "$TOOLS/cosign_checksums.txt"
+          (cd "$TOOLS" && grep '  cosign-linux-amd64$' cosign_checksums.txt | sha256sum --check --strict)
+          install -m 0755 "$TOOLS/cosign-linux-amd64" "$TOOLS/bin/cosign"
+          echo "$TOOLS/bin" >> "$GITHUB_PATH"
 
-      - name: Install syft (SBOM generator)
-        uses: anchore/sbom-action/download-syft@v0
+      - name: Validate release configuration
+        run: goreleaser check
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
+      - name: Publish signed release
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

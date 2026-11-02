@@ -9,7 +9,7 @@ image:
   # this repository, push it to a registry your cluster can pull from,
   # and set image.repository and image.tag to match.
   repository: kshark
-  tag: "1.1.1"
+  tag: "1.1.2"
   pullPolicy: IfNotPresent
 
 # Where kshark reports are written. kshark writes to reports/ under its

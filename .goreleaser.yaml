@@ -3,6 +3,8 @@
 # Build configuration for GoReleaser.
 # See https://goreleaser.com/customization/ for more options.
 
+version: 2
+
 project_name: kshark
 
 before:
@@ -30,24 +32,25 @@ archives:
   - id: default
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
-    format: tar.gz
+    formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     files:
       - LICENSE
       - README.md
       - client.properties.example
       - ai_config.json.example
-      - web/templates/**/*
+      - web/templates/*
 
 checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
 
-# SBOM generation -- produces CycloneDX and SPDX for each archive
+# SBOM generation -- produces CycloneDX for each archive
 sboms:
   - artifacts: archive
+    args: ["${artifact}", "--output", "cyclonedx-json=${document}"]
     documents:
       - "{{ .ArtifactName }}.sbom.cdx.json"
 
@@ -56,14 +59,14 @@ signs:
   - cmd: cosign
     artifacts: checksum
     output: true
+    signature: "${artifact}.sigstore.json"
     args:
       - sign-blob
       - "--yes"
-      - "--output-certificate=${certificate}"
-      - "--output-signature=${signature}"
+      - "--bundle=${signature}"
       - "${artifact}"
 
-brews:
+homebrew_casks:
   - name: kshark
     repository:
       owner: scalytics
@@ -73,13 +76,10 @@ brews:
     homepage: "https://github.com/scalytics/kshark-core"
     description: "Kafka connectivity diagnostic tool — layered probe from DNS to produce/consume"
     license: "Apache-2.0"
-    install: |
-      bin.install "kshark"
-    test: |
-      system "#{bin}/kshark", "--version"
+    binaries: [kshark]
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -111,8 +111,7 @@ release:
     ```bash
     # Verify checksum signature (requires cosign)
     cosign verify-blob \
-      --certificate checksums.txt.pem \
-      --signature checksums.txt.sig \
+      --bundle checksums.txt.sigstore.json \
       --certificate-identity-regexp='https://github.com/scalytics/kshark-core' \
       --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
       checksums.txt

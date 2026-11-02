@@ -4,8 +4,8 @@ description: >
   kshark is a Kafka diagnostic CLI. Deployed as a scheduled CronJob that runs
   full-stack connectivity probes and writes JSON/HTML reports to a PVC.
 type: application
-version: 0.1.2
-appVersion: "1.1.1"
+version: 0.1.3
+appVersion: "1.1.2"
 maintainers:
   - name: Scalytics Platform Team
 keywords:
