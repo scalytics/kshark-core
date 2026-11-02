@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -49,9 +50,12 @@ func startContainer(t *testing.T, image string, containerPort int, env map[strin
 	}
 	args = append(args, image)
 	args = append(args, cmd...)
-	out, err := exec.Command("docker", args...).CombinedOutput()
+	var stderr bytes.Buffer
+	command := exec.Command("docker", args...)
+	command.Stderr = &stderr
+	out, err := command.Output()
 	if err != nil {
-		t.Fatalf("docker run %s: %v: %s", image, err, out)
+		t.Fatalf("docker run %s: %v: %s", image, err, stderr.String())
 	}
 	id := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
