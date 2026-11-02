@@ -17,14 +17,14 @@ kshark acts like a network sniffer for Kafka, providing comprehensive health che
 
 | Document | Description |
 |----------|-------------|
-| [Architecture]({% link ARCHITECTURE.md %}) | System architecture, components, and design patterns |
-| [Features]({% link FEATURES.md %}) | Complete feature list and configuration reference |
-| [Deployment]({% link DEPLOYMENT.md %}) | Docker, Kubernetes, and CI/CD deployment guides |
-| [Security]({% link SECURITY.md %}) | Security audit, OWASP analysis, and hardening |
-| [Release Notes]({% link RELEASE.md %}) | Release history and upgrade notes |
-| [Connector Probe]({% link connector-probe.md %}) | Probing MongoDB, PostgreSQL, and DB2 targets |
-| [Contributing]({% link contributing.md %}) | How to contribute to kshark |
-| [Changelog]({% link changelog.md %}) | Detailed change log |
+| [Architecture](ARCHITECTURE.md) | System architecture, components, and design patterns |
+| [Features](FEATURES.md) | Complete feature list and configuration reference |
+| [Deployment](DEPLOYMENT.md) | Docker, Kubernetes, and CI/CD deployment guides |
+| [Security](SECURITY.md) | Security audit, OWASP analysis, and hardening |
+| [Release Notes](RELEASE.md) | Release history and upgrade notes |
+| [Connector Probe](connector-probe.md) | Probing MongoDB, PostgreSQL, and DB2 targets |
+| [Contributing](contributing.md) | How to contribute to kshark |
+| [Changelog](changelog.md) | Detailed change log |
 
 ---
 
@@ -70,4 +70,14 @@ Diagnostics       Traceroute, MTU discovery, network path analysis
 
 ---
 
-Built with care for the Kafka community by [Scalytics](https://scalytics.io).
+## Related projects
+
+kshark-core is also an example of how agents can use our tools to debug Kafka clusters: the JSON reports are built for scripts and AI agents to read.
+
+- [KafClaw](https://github.com/KafClaw/KafClaw): agent runtime in Go that connects AI agents through Kafka topics. It ships a `kafclaw kshark` command for Kafka diagnostics.
+- [KafScale](https://kafscale.io/): Kafka-compatible streaming that keeps the log in S3.
+- [kaf-mirror](https://github.com/scalytics/kaf-mirror): Kafka-to-Kafka replication with a web dashboard, REST API and CLI.
+
+Source code: [github.com/scalytics/kshark-core](https://github.com/scalytics/kshark-core). All Scalytics open source projects: [scalytics.io/open-source](https://www.scalytics.io/open-source).
+
+Built with care for the Kafka community by [Scalytics](https://www.scalytics.io).

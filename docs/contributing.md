@@ -4,5 +4,5 @@ title: Contributing
 nav_order: 8
 ---
 
-{% capture content %}{% include_relative ../CONTRIBUTING.md %}{% endcapture %}
+{% capture content %}{% include CONTRIBUTING.md %}{% endcapture %}
 {{ content }}

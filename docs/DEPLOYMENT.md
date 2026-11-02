@@ -3,6 +3,7 @@ layout: default
 title: Deployment
 nav_order: 4
 ---
+{% raw %}
 
 # kshark Deployment Guide
 
@@ -1196,3 +1197,4 @@ This deployment guide provides comprehensive strategies for running kshark acros
 **Author:** kshark Development Team
 **Last Review:** 2025-11-13
 **Next Review:** 2025-12-13
+{% endraw %}

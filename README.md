@@ -227,16 +227,28 @@ go build -o kshark ./cmd/kshark
 
 ### Option 3: Docker
 
-```bash
-# Pull the image (when published)
-docker pull ghcr.io/scalytics/kshark-core:latest
+No container image is published. Build it locally:
 
-# Or build locally
+```bash
 docker build -t kshark:latest .
 
-# Run with mounted configuration
-docker run -v $(pwd):/config kshark:latest -props /config/client.properties
+mkdir -p reports
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/client.properties:/config/client.properties:ro" \
+  -v "$PWD/reports:/app/reports" \
+  kshark:latest -props /config/client.properties -y
 ```
+
+The container runs as UID 65532 and writes reports to `/app/reports`. Mount a host directory there to keep them. `--user` lets the container write to a directory owned by your host user.
+
+For a diagnostics bundle on a read-only root filesystem, pass
+`-bundle=/app/reports/diagnostics.tar.gz`. A bare `-bundle` writes to the
+current working directory, which is `/app` in this image.
+
+To check image permissions and persistent report output without connecting to
+an external Kafka cluster, run `sh testbed/run-container-smoke.sh kshark:latest`
+after building the image. The check uses the default container user, a read-only
+root filesystem and a temporary Docker volume that it removes afterwards.
 
 ---
 
@@ -769,13 +781,14 @@ Summary: 9 OK, 1 WARN, 0 FAIL
 docker build -t kshark:latest .
 
 # Run diagnostic
-docker run --rm \
-  -v $(pwd)/client.properties:/config/client.properties:ro \
-  -v $(pwd)/reports:/reports \
-  kshark:latest -props /config/client.properties -topic test -y
+mkdir -p reports
+docker run --rm --user "$(id -u):$(id -g)" \
+  -v "$PWD/client.properties:/config/client.properties:ro" \
+  -v "$PWD/reports:/app/reports" \
+  kshark:latest -props /config/client.properties -topic test -y -json test.json
 
-# Check the report
-open reports/analysis_report_*.html
+# Check the JSON report and log
+ls reports/
 ```
 
 ### Kubernetes CronJob Example
@@ -954,7 +967,7 @@ Key quality properties:
 This project is licensed under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for complete details.
 
 ```
-Copyright 2024-2026 Scalytics GmbH and kshark Contributors
+Copyright 2024-2026 Scalytics, Inc. and kshark Contributors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -979,6 +992,18 @@ limitations under the License.
 - DB2 probing via custom DRDA wire protocol implementation (no CGO)
 - Inspired by network diagnostic tools like `tcpdump`, `wireshark`, and `netcat`
 - Special thanks to the Kafka community
+
+---
+
+## Related projects
+
+kshark-core is also an example of how agents can use our tools to debug Kafka clusters: the JSON reports are built for scripts and AI agents to read.
+
+- [KafClaw](https://github.com/KafClaw/KafClaw): agent runtime in Go that connects AI agents through Kafka topics. It ships a `kafclaw kshark` command for Kafka diagnostics.
+- [KafScale](https://github.com/KafScale/platform): Kafka-compatible streaming that keeps the log in S3.
+- [kaf-mirror](https://github.com/scalytics/kaf-mirror): Kafka-to-Kafka replication with a web dashboard, REST API and CLI.
+
+All projects are listed at [scalytics.io/open-source](https://www.scalytics.io/open-source). For governed AI agents on Kafka with commercial support, see [Lascaris](https://www.scalytics.io/lascaris).
 
 ---
 
