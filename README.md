@@ -456,6 +456,7 @@ TCP FAIL on port 9092
 | All ports + ICMP blocked | `host_unreachable` | high |
 | All TCP blocked, ICMP open | `all_tcp_blocked` | high |
 | Connection refused (not timeout) | `service_not_listening` | high |
+| Mix of refused and timed-out ports, no open port | `mixed_filtering` | medium |
 | All ports open | `no_network_restriction` | high |
 
 ### Usage
