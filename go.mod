@@ -7,7 +7,7 @@ toolchain go1.26.10
 require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/segmentio/kafka-go v0.4.51
-	go.mongodb.org/mongo-driver/v2 v2.9.2
+	go.mongodb.org/mongo-driver/v2 v2.9.3
 	gopkg.in/yaml.v3 v3.0.1
 )
 
