@@ -9,6 +9,8 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/badge/Go-1.25-blue.svg)](https://golang.org/)
 
+Read more: [Most Kafka connection problems are not Kafka problems at all](https://www.novatechflow.com/2026/11/debug-kafka-connection-problems-from.html)
+
 ---
 
 ## Built for AI Agents and Teams of Collaborating Experts
