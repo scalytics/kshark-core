@@ -16,7 +16,7 @@ jobs:
     # Keep the integration suite on Ubuntu 22.04 until MongoDB supports it.
     runs-on: ubuntu-22.04
     env:
-      GOTOOLCHAIN: go1.26.10
+      GOTOOLCHAIN: go1.26.11
     steps:
       # The organization permits local actions only. Keep PR checks executable
       # without external actions, and never schedule paid macOS runners.
